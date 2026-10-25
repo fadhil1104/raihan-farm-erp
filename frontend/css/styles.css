@@ -1,0 +1,19 @@
+body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #0b0f19; color: #f8fafc; }
+.active-nav { background: linear-gradient(90deg, #facc15 0%, #eab308 100%); color: #0f172a !important; font-weight: 800 !important; box-shadow: 0 4px 16px 0 rgba(250, 204, 21, 0.35); }
+.active-nav i { color: #0f172a !important; }
+.card { background-color: #151c2c; border: 1px solid #263147; border-radius: 0.9rem; }
+.card-highlight { background: linear-gradient(145deg, #1e293b 0%, #151c2c 100%); border: 1px solid rgba(250, 204, 21, 0.35); border-radius: 0.9rem; }
+input, select, textarea { background-color: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: #facc15 !important; box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.25); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0b0f19; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #facc15; }
+
+/* Print handling for payslip, thermal receipt, reports and wall QR poster */
+@media print {
+  body * { visibility: hidden; }
+  .printable-active, .printable-active * { visibility: visible; }
+  .printable-active { position: absolute; left: 0; top: 0; width: 100%; background: white !important; color: black !important; padding: 20px !important; border: none !important; box-shadow: none !important; }
+  .no-print { display: none !important; }
+}

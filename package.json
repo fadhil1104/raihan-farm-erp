@@ -1,0 +1,15 @@
+{
+  "name": "raihan-farm-erp",
+  "private": true,
+  "scripts": {
+    "install:backend": "npm --prefix backend install",
+    "install:frontend": "npm --prefix frontend install",
+    "start": "npm run start:backend",
+    "start:backend": "npm --prefix backend start",
+    "dev": "npm run dev:backend",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "seed": "npm --prefix backend run seed"
+  }
+}
