@@ -55,6 +55,15 @@ The frontend is available at `http://localhost:8080`, the API at
 `http://localhost:5000`, and MongoDB at `localhost:27017`. The frontend web server
 proxies `/api` requests to the separate backend service.
 
+## Vercel frontend
+
+Import the repository into Vercel with the repository root as the project root.
+The root `vercel.json` installs and builds the Vite frontend and serves its SPA
+entry point. Deploy the Express/MongoDB backend separately, then set
+`VITE_API_BASE` in the Vercel project's environment variables to the public backend
+origin (for example, `https://your-api.example.com`) for each environment. Configure
+the backend's `CORS_ORIGIN` to allow the Vercel frontend origin.
+
 ## Frontend migration
 
 The existing ERP UI and its API workflows are preserved in `frontend/legacy.html`
