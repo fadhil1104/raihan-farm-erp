@@ -34,14 +34,14 @@ async function toggleClock(emp, method) {
 
 // PUBLIC - used by the mobile wall-QR page (PINs are never exposed)
 router.get('/roster', async (req, res) => {
-  const rows = await Employee.find().sort({ seq: 1 }).lean();
+  const rows = await Employee.find({ archivedAt: null }).sort({ seq: 1 }).lean();
   res.json(rows.map((e) => ({ id: e.id, name: e.name, role: e.role, clockedIn: !!e.clockedIn, lastClockIn: e.lastClockIn })));
 });
 
 // PUBLIC - staff scans wall QR, picks name, types PIN
 router.post('/qr-clock', async (req, res) => {
   const emp = await Employee.findOne({ id: Number(req.body.empId) });
-  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (!emp || emp.archivedAt) return res.status(404).json({ error: 'Active employee not found' });
   if (String(req.body.pin || '') !== String(emp.pin)) return res.status(401).json({ error: 'Incorrect 4-digit PIN' });
   res.json(await toggleClock(emp, 'Wall QR Mobile'));
 });
@@ -49,7 +49,7 @@ router.post('/qr-clock', async (req, res) => {
 // ADMIN - kiosk buttons (no PIN needed)
 router.post('/clock', requireAuth, requireAdmin, async (req, res) => {
   const emp = await Employee.findOne({ id: Number(req.body.empId) });
-  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (!emp || emp.archivedAt) return res.status(404).json({ error: 'Active employee not found' });
   res.json(await toggleClock(emp, 'Kiosk'));
 });
 

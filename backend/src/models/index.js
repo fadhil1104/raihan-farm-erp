@@ -40,7 +40,7 @@ const PosSale = model('PosSale', new Schema({
 
 const Employee = model('Employee', new Schema({
   ...base, id: Number, name: String, phone: String, role: String, pin: String, baseSalary: Number, otRate: Number,
-  allowance: Number, advance: Number, clockedIn: Boolean, lastClockIn: String
+  allowance: Number, advance: Number, clockedIn: Boolean, lastClockIn: String, archivedAt: Date
 }, opts));
 
 const AttendanceLog = model('AttendanceLog', new Schema({

@@ -253,6 +253,8 @@ async function handleLogin() {
     const res = await Api.login(u, p);
     Api.setToken(res.token);
     currentUser = res.user;
+    updateRoleSidebar();
+    switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
     $('login-modal').classList.add('hidden');
     $('login-password').value = '';
     savePending = false;
@@ -271,12 +273,8 @@ async function handleLogin() {
 }
 
 function applyRolePermissions() {
+  updateRoleSidebar();
   const isAdmin = currentUser && currentUser.role === 'admin';
-  $('active-user-label').innerText = currentUser ? currentUser.label : 'Not signed in';
-  $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
-  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
-  $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>' : '<i class="fa-solid fa-cash-register"></i>';
-  document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !isAdmin));
 
   const invNotice = $('inv-role-notice');
   if (isAdmin) {
@@ -287,6 +285,22 @@ function applyRolePermissions() {
     invNotice.innerText = 'Staff Mode: 1 Direct Edit Per Item (2nd+ Requires Admin Approval)';
   }
   renderAll();
+}
+
+function updateRoleSidebar() {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  $('active-user-label').innerText = currentUser ? currentUser.label : 'Not signed in';
+  $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
+  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
+  $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>' : '<i class="fa-solid fa-cash-register"></i>';
+  document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !isAdmin));
+  let number = 0;
+  document.querySelectorAll('#nav-dashboard, #nav-slaughter, #nav-inventory, #nav-pos, #nav-attendance, #nav-payroll, #nav-deliveries, #nav-coa')
+    .forEach((nav) => {
+      if (nav.classList.contains('hidden')) return;
+      const title = nav.querySelector('.nav-title');
+      if (title) title.innerText = `${++number}. ${title.innerText.replace(/^\d+\.\s*/, '')}`;
+    });
 }
 
 function switchTab(tabId) {
@@ -1145,6 +1159,32 @@ function saveManualAttendance() {
 
 function openAddEmployeeModal() { $('add-emp-modal').classList.toggle('hidden'); }
 
+async function archiveStaff(employeeId) {
+  const employee = state.employees.find((entry) => entry.id === employeeId);
+  if (!employee || !confirm(`Archive ${employee.name}? Their account will be disabled, but their attendance and payroll history will be kept.`)) return;
+  try {
+    const result = await Api.archiveStaff(employeeId);
+    employee.archivedAt = result.employee.archivedAt;
+    renderAll();
+    showToast(`${employee.name} archived. Their reports remain available.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function restoreStaff(employeeId) {
+  const employee = state.employees.find((entry) => entry.id === employeeId);
+  if (!employee) return;
+  try {
+    await Api.restoreStaff(employeeId);
+    delete employee.archivedAt;
+    renderAll();
+    showToast(`${employee.name} restored and can sign in again.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function createExistingStaffAccount() {
   const employeeId = Number($('existing-staff-account-employee').value);
   const phone = $('existing-staff-account-phone').value.trim();
@@ -1474,6 +1514,8 @@ function renderSlaughterProducts() {
 function renderAll() {
   if (!state) return;
   const isAdmin = currentUser && currentUser.role === 'admin';
+  const activeEmployees = state.employees.filter((employee) => !employee.archivedAt);
+  const archivedEmployees = state.employees.filter((employee) => employee.archivedAt);
   const manDate = $('man-date');
   if (manDate && !manDate.value) manDate.value = getTodayDate();
 
@@ -1494,12 +1536,12 @@ function renderAll() {
   $('kpi-waste-sub').innerText = state.slaughterBatches.length
     ? `${state.slaughterBatches.length} farm batches processed`
     : 'No slaughter batches recorded';
-  $('kpi-staff').innerText = state.employees.length
-    ? `${state.employees.filter((e) => e.clockedIn).length} / ${state.employees.length}`
+  $('kpi-staff').innerText = activeEmployees.length
+    ? `${activeEmployees.filter((e) => e.clockedIn).length} / ${activeEmployees.length}`
     : '—';
   let totalPayroll = 0, totalShopOt = 0;
-  state.employees.forEach((emp) => { const p = payrollOf(emp); totalShopOt += p.totalOt; totalPayroll += p.netPay; });
-  $('kpi-payroll-mini').innerText = state.employees.length ? `Month Payroll: Rs. ${totalPayroll.toLocaleString()}` : 'No payroll records';
+  activeEmployees.forEach((emp) => { const p = payrollOf(emp); totalShopOt += p.totalOt; totalPayroll += p.netPay; });
+  $('kpi-payroll-mini').innerText = activeEmployees.length ? `Month Payroll: Rs. ${totalPayroll.toLocaleString()}` : 'No payroll records';
   $('dash-ot-summary').innerText = state.attendanceLogs.length ? `Total OT: ${totalShopOt.toFixed(1)} hrs` : '';
   $('kpi-deliveries').innerText = state.deliveries.length ? `${state.deliveries.length} Orders` : '—';
   $('kpi-subs-mini').innerText = state.subscriptions.length ? `${state.subscriptions.length} weekly box subscribers` : 'No subscriptions recorded';
@@ -1525,9 +1567,9 @@ function renderAll() {
       <span class="px-2 py-1 rounded-lg font-bold ${b.wastePct <= 31 ? 'bg-yellow-400/15 text-yellow-400' : 'bg-red-500/20 text-red-400'}">${b.wastePct}% Waste</span>
     </div>`).join('');
 
-  $('dash-attendance-list').innerHTML = state.employees.length === 0
+  $('dash-attendance-list').innerHTML = activeEmployees.length === 0
     ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No staff records yet.</div>'
-    : state.employees.slice(0, 4).map((e) => `
+    : activeEmployees.slice(0, 4).map((e) => `
     <div class="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
       <div><p class="font-bold text-white">${esc(e.name)}</p><p class="text-slate-400 text-[11px]">${esc(e.role)}</p></div>
       <span class="px-2.5 py-1 rounded-full font-bold ${e.clockedIn ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}">${e.clockedIn ? 'In (' + esc(e.lastClockIn) + ')' : 'Signed Out'}</span>
@@ -1623,7 +1665,7 @@ function renderAll() {
     </tr>`).join('');
 
   // Attendance kiosk
-  $('kiosk-cards').innerHTML = state.employees.map((e) => {
+  $('kiosk-cards').innerHTML = activeEmployees.length ? activeEmployees.map((e) => {
     const shifts = monthLogs(e.id).length;
     return `
       <div class="card p-4 flex flex-col justify-between border ${e.clockedIn ? 'border-yellow-400/50' : 'border-slate-800'}">
@@ -1642,18 +1684,18 @@ function renderAll() {
           <i class="fa-solid ${e.clockedIn ? 'fa-right-from-bracket' : 'fa-right-to-bracket'} mr-1"></i> ${e.clockedIn ? 'Sign Out' : 'Sign In'}
         </button>
       </div>`;
-  }).join('');
+  }).join('') : '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No active staff. Add a staff member from Month-End Payroll.</div>';
 
   const filterEl = $('filter-emp-logs');
   const curFilter = filterEl.value || 'ALL';
-  filterEl.innerHTML = `<option value="ALL">All Employees (${state.employees.length})</option>` + state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
+  filterEl.innerHTML = `<option value="ALL">All Staff History (${state.employees.length})</option>` + state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}${e.archivedAt ? ' (Archived)' : ''}</option>`).join('');
   filterEl.value = [...filterEl.options].some((o) => o.value === curFilter) ? curFilter : 'ALL';
-  $('man-emp').innerHTML = state.employees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
-  $('existing-staff-account-employee').innerHTML = state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
+  $('man-emp').innerHTML = activeEmployees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  $('existing-staff-account-employee').innerHTML = activeEmployees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
   renderAttendanceLogs();
 
   // Payroll
-  $('payroll-tbody').innerHTML = state.employees.map((emp) => {
+  $('payroll-tbody').innerHTML = activeEmployees.map((emp) => {
     const p = payrollOf(emp);
     return `
       <tr class="hover:bg-slate-800/40 transition">
@@ -1666,11 +1708,29 @@ function renderAll() {
         <td class="py-3 px-3"><input type="number" value="${emp.advance}" onchange="updatePayrollField(${emp.id}, 'advance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold text-red-400"></td>
         <td class="py-3 px-3 text-right font-black text-base text-yellow-400">Rs. ${p.netPay.toLocaleString()}</td>
         <td class="py-3 px-3 text-center"><button onclick="openPayslipModal(${emp.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-print mr-1"></i> Payslip</button></td>
+        <td class="py-3 px-3 text-center"><button onclick="archiveStaff(${emp.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i> Archive</button></td>
       </tr>`;
   }).join('');
 
+  $('archived-staff-reports').classList.toggle('hidden', archivedEmployees.length === 0);
+  $('archived-staff-tbody').innerHTML = archivedEmployees.map((emp) => {
+    const logs = state.attendanceLogs.filter((log) => log.empId === emp.id);
+    const hours = logs.reduce((total, log) => total + Number(log.hours || 0), 0);
+    const overtime = logs.reduce((total, log) => total + Number(log.ot || 0), 0);
+    const payroll = payrollOf(emp);
+    return `<tr>
+      <td class="py-3 px-3"><div class="font-bold text-white">${esc(emp.name)}</div><div class="text-xs text-slate-400">${esc(emp.role)}</div></td>
+      <td class="py-3 px-3 text-slate-300">${esc(String(emp.archivedAt).slice(0, 10))}</td>
+      <td class="py-3 px-3">${logs.length}</td>
+      <td class="py-3 px-3">${hours.toFixed(1)} hrs</td>
+      <td class="py-3 px-3 text-yellow-400">${overtime.toFixed(1)} hrs</td>
+      <td class="py-3 px-3">This month: Rs. ${payroll.netPay.toLocaleString()}</td>
+      <td class="py-3 px-3 text-center"><button onclick="restoreStaff(${emp.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i> Restore</button></td>
+    </tr>`;
+  }).join('');
+
   // Deliveries & subscriptions
-  const riders = state.employees.map((e) => e.name);
+  const riders = activeEmployees.map((e) => e.name);
   const statuses = ['Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
   $('deliveries-tbody').innerHTML = state.deliveries.map((d) => `
     <tr class="hover:bg-slate-800/40 transition">
@@ -1705,7 +1765,7 @@ function renderAttendanceLogs() {
       banner.classList.remove('hidden');
       banner.innerHTML = `
         <div><span class="text-xs uppercase text-yellow-400 font-bold">Individual Employee Attendance Summary</span>
-        <h4 class="text-base font-black text-white">${esc(emp.name)} <span class="text-xs font-normal text-slate-400">(${esc(emp.role)})</span></h4></div>
+        <h4 class="text-base font-black text-white">${esc(emp.name)} <span class="text-xs font-normal text-slate-400">(${esc(emp.role)}${emp.archivedAt ? ', Archived' : ''})</span></h4></div>
         <div class="flex gap-6 text-xs">
           <div><span class="text-slate-400 block">Shifts Logged</span><strong class="text-sm text-white">${logs.length} Shifts</strong></div>
           <div><span class="text-slate-400 block">Total Hours</span><strong class="text-sm text-emerald-400">${logs.reduce((s, l) => s + Number(l.hours || 0), 0).toFixed(1)} hrs</strong></div>
@@ -1719,7 +1779,7 @@ function renderAttendanceLogs() {
     return `
       <tr class="hover:bg-slate-800/40 transition">
         <td class="py-3 px-4 text-slate-300 font-medium">${esc(l.date)}</td>
-        <td class="py-3 px-4 font-bold text-white">${esc(emp.name)}</td>
+        <td class="py-3 px-4 font-bold text-white">${esc(emp.name)}${emp.archivedAt ? ' <span class="text-[10px] text-amber-300">(Archived)</span>' : ''}</td>
         <td class="py-3 px-4 text-xs text-slate-400">${esc(emp.role)}</td>
         <td class="py-3 px-4 text-emerald-400 font-semibold">${esc(l.signIn)}</td>
         <td class="py-3 px-4 ${l.signOut === 'Active Shift' ? 'text-yellow-400 font-bold' : 'text-slate-300'}">${esc(l.signOut)}</td>

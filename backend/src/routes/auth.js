@@ -21,7 +21,7 @@ router.post('/login', async (req, res) => {
     const phone = normalizePhone(username);
     if (validPhone(phone)) user = await User.findOne({ username: phone });
   }
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+  if (!user || user.isActive === false || !(await bcrypt.compare(password, user.passwordHash))) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   res.json({ token: signToken(user), user: { username: user.username, role: user.role, label: user.label } });
@@ -56,6 +56,7 @@ router.post('/staff', requireAuth, requireAdmin, async (req, res) => {
     if (isExistingEmployee) {
       employee = await Employee.findOne({ id });
       if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      if (employee.archivedAt) return res.status(409).json({ error: 'Restore this employee before creating a staff login' });
     } else {
       if (await Employee.exists({ id })) return res.status(409).json({ error: 'An employee already uses this ID' });
       employee = await Employee.create({
@@ -88,6 +89,39 @@ router.post('/staff', requireAuth, requireAdmin, async (req, res) => {
   }
 
   res.status(201).json({ employee: employee.toObject() });
+});
+
+// DELETE /api/auth/staff/:employeeId -> archive employee and disable their account (admin only)
+router.delete('/staff/:employeeId', requireAuth, requireAdmin, async (req, res) => {
+  const employeeId = Number(req.params.employeeId);
+  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
+    return res.status(400).json({ error: 'Invalid employee ID' });
+  }
+
+  const employee = await Employee.findOne({ id: employeeId });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (employee.clockedIn) return res.status(409).json({ error: 'Sign this employee out before archiving them' });
+  if (!employee.archivedAt) {
+    employee.archivedAt = new Date();
+    await employee.save();
+  }
+  await User.updateOne({ employeeId, role: 'staff' }, { $set: { isActive: false } });
+  res.json({ ok: true, employee: employee.toObject() });
+});
+
+// PATCH /api/auth/staff/:employeeId/restore -> restore an archived employee (admin only)
+router.patch('/staff/:employeeId/restore', requireAuth, requireAdmin, async (req, res) => {
+  const employeeId = Number(req.params.employeeId);
+  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
+    return res.status(400).json({ error: 'Invalid employee ID' });
+  }
+
+  const employee = await Employee.findOne({ id: employeeId });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  employee.archivedAt = undefined;
+  await employee.save();
+  await User.updateOne({ employeeId, role: 'staff' }, { $set: { isActive: true } });
+  res.json({ ok: true, employee: employee.toObject() });
 });
 
 // PUT /api/auth/me -> staff may update their own name, phone, and password

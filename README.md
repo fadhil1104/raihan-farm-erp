@@ -107,6 +107,8 @@ The backend and MongoDB API remain independently runnable and deployable.
 | POST | `/api/auth/login` | public | `{username,password}` → JWT |
 | GET | `/api/auth/me` | token | current user |
 | POST | `/api/auth/staff` | admin | Create an employee and login, or set up a login for an existing employee |
+| DELETE | `/api/auth/staff/:employeeId` | admin | Archive staff and disable login without deleting payroll or attendance history |
+| PATCH | `/api/auth/staff/:employeeId/restore` | admin | Restore archived staff and reactivate their login |
 | PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
 | PUT | `/api/state` | token | sync state changes |

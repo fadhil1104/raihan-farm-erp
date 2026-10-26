@@ -363,19 +363,19 @@
 
       <nav class="mt-4 lg:mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-1.5">
         <button onclick="switchTab('dashboard')" id="nav-dashboard" class="admin-only-nav w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition active-nav">
-          <span class="flex items-center gap-3 truncate"><i class="fa-solid fa-chart-pie w-5 text-center"></i><span class="truncate">1. Admin Dashboard</span></span>
+          <span class="flex items-center gap-3 truncate"><i class="fa-solid fa-chart-pie w-5 text-center"></i><span class="truncate nav-title">1. Admin Dashboard</span></span>
           <span class="flex items-center gap-1.5">
             <span id="nav-low-stock-badge" title="Low-stock alerts" class="hidden px-1.5 py-0.5 text-[10px] font-black rounded-full bg-red-600 text-white"></span>
             <span id="nav-approval-badge" class="hidden px-1.5 py-0.5 text-[10px] font-black rounded-full bg-red-600 text-white"></span>
           </span>
         </button>
-        <button onclick="switchTab('slaughter')" id="nav-slaughter" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-scale-balanced w-5 text-center text-yellow-400"></i><span class="truncate">2. Farm & Slaughter (30%)</span></button>
-        <button onclick="switchTab('inventory')" id="nav-inventory" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-boxes-stacked w-5 text-center text-yellow-400"></i><span class="truncate">3. Dressed Inventory</span></button>
-        <button onclick="switchTab('pos')" id="nav-pos" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-cash-register w-5 text-center text-yellow-400"></i><span class="truncate">4. Shop POS Terminal</span></button>
-        <button onclick="switchTab('attendance')" id="nav-attendance" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-user-clock w-5 text-center text-yellow-400"></i><span class="truncate">5. Staff Sign-In / Out</span></button>
-        <button onclick="switchTab('payroll')" id="nav-payroll" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-money-check-dollar w-5 text-center text-yellow-400"></i><span class="truncate">6. Month-End Payroll</span></button>
-        <button onclick="switchTab('deliveries')" id="nav-deliveries" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition col-span-2 sm:col-span-2 lg:col-span-1"><i class="fa-solid fa-truck-fast w-5 text-center text-yellow-400"></i><span class="truncate">7. Deliveries & Weekly Subs</span></button>
-        <button onclick="switchTab('coa')" id="nav-coa" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-book-journal-whills w-5 text-center text-yellow-400"></i><span class="truncate">8. Chart of Accounts</span></button>
+        <button onclick="switchTab('slaughter')" id="nav-slaughter" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-scale-balanced w-5 text-center text-yellow-400"></i><span class="truncate nav-title">2. Farm & Slaughter (30%)</span></button>
+        <button onclick="switchTab('inventory')" id="nav-inventory" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-boxes-stacked w-5 text-center text-yellow-400"></i><span class="truncate nav-title">3. Dressed Inventory</span></button>
+        <button onclick="switchTab('pos')" id="nav-pos" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-cash-register w-5 text-center text-yellow-400"></i><span class="truncate nav-title">4. Shop POS Terminal</span></button>
+        <button onclick="switchTab('attendance')" id="nav-attendance" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-user-clock w-5 text-center text-yellow-400"></i><span class="truncate nav-title">5. Staff Sign-In / Out</span></button>
+        <button onclick="switchTab('payroll')" id="nav-payroll" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-money-check-dollar w-5 text-center text-yellow-400"></i><span class="truncate nav-title">6. Month-End Payroll</span></button>
+        <button onclick="switchTab('deliveries')" id="nav-deliveries" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition col-span-2 sm:col-span-2 lg:col-span-1"><i class="fa-solid fa-truck-fast w-5 text-center text-yellow-400"></i><span class="truncate nav-title">7. Deliveries & Weekly Subs</span></button>
+        <button onclick="switchTab('coa')" id="nav-coa" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-book-journal-whills w-5 text-center text-yellow-400"></i><span class="truncate nav-title">8. Chart of Accounts</span></button>
       </nav>
     </div>
 
@@ -894,6 +894,20 @@
         </div>
         <button onclick="openAddEmployeeModal()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2.5 rounded-xl text-xs font-extrabold transition shadow-lg shadow-yellow-400/20"><i class="fa-solid fa-user-plus mr-1.5"></i> Add New Staff Member</button>
       </div>
+      <div id="archived-staff-reports" class="hidden card p-5 space-y-3">
+        <div>
+          <h3 class="font-bold text-base text-yellow-400">Archived Staff & Preserved Reports</h3>
+          <p class="text-xs text-slate-400 mt-1">Archived staff can no longer sign in or clock attendance. Their past attendance and payroll records remain available here and in Attendance History.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead><tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
+              <th class="py-3 px-3">Employee</th><th class="py-3 px-3">Archived</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Total Hours</th><th class="py-3 px-3">Overtime</th><th class="py-3 px-3">Historical Payroll</th><th class="py-3 px-3">Access</th>
+            </tr></thead>
+            <tbody id="archived-staff-tbody" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
       <div id="add-emp-modal" class="card-highlight p-5 hidden space-y-3">
         <div class="flex justify-between items-center">
           <h4 class="font-bold text-sm uppercase text-yellow-400"><i class="fa-solid fa-id-badge mr-1"></i> Register New Raihan Farm Shop Employee</h4>
@@ -932,7 +946,7 @@
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-              <th class="py-3 px-3">Employee & Role</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Base Salary</th><th class="py-3 px-3">OT Hours</th><th class="py-3 px-3">OT Pay</th><th class="py-3 px-3">Allowances (Rs.)</th><th class="py-3 px-3">Advances (Rs.)</th><th class="py-3 px-3 text-right">Net Month-End Salary</th><th class="py-3 px-3 text-center">Payslip</th>
+              <th class="py-3 px-3">Employee & Role</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Base Salary</th><th class="py-3 px-3">OT Hours</th><th class="py-3 px-3">OT Pay</th><th class="py-3 px-3">Allowances (Rs.)</th><th class="py-3 px-3">Advances (Rs.)</th><th class="py-3 px-3 text-right">Net Month-End Salary</th><th class="py-3 px-3 text-center">Payslip</th><th class="py-3 px-3 text-center">Staff Access</th>
             </tr>
           </thead>
           <tbody id="payroll-tbody" class="divide-y divide-slate-800"></tbody>

@@ -34,6 +34,8 @@ const Api = (() => {
     login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password }, auth: false }),
     createStaff: (employee, phone, password) => request('/auth/staff', { method: 'POST', body: { employee, phone, password } }),
     createStaffAccount: (employeeId, phone, password) => request('/auth/staff', { method: 'POST', body: { employeeId, phone, password } }),
+    archiveStaff: (employeeId) => request('/auth/staff/' + encodeURIComponent(employeeId), { method: 'DELETE' }),
+    restoreStaff: (employeeId) => request('/auth/staff/' + encodeURIComponent(employeeId) + '/restore', { method: 'PATCH' }),
     updateStaffProfile: (profile, tokenOverride) => request('/auth/me', { method: 'PUT', body: profile, tokenOverride }),
     me: () => request('/auth/me'),
     getState: () => request('/state'),
