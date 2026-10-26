@@ -58,11 +58,20 @@ proxies `/api` requests to the separate backend service.
 ## Vercel frontend
 
 Import the repository into Vercel with the repository root as the project root.
-The root `vercel.json` installs and builds the Vite frontend and serves its SPA
-entry point. Deploy the Express/MongoDB backend separately, then set
-`VITE_API_BASE` in the Vercel project's environment variables to the public backend
-origin (for example, `https://your-api.example.com`) for each environment. Configure
-the backend's `CORS_ORIGIN` to allow the Vercel frontend origin.
+The root `vercel.json` installs frontend dependencies from `frontend/package-lock.json`,
+builds the Vite app, publishes `frontend/dist`, and routes SPA paths to `index.html`.
+Set `VITE_API_BASE` in Vercel's environment variables for each environment to the
+public backend origin without a trailing `/api` (for example,
+`https://your-api.example.com`). This is a frontend build-time variable. The
+backend's `VITE_API_URL` setting is not read by the frontend build; configure
+`VITE_API_BASE` in Vercel instead.
+
+Deploy the Express/MongoDB backend separately; `backend/server.js` starts a
+long-running Express server and is not configured as a Vercel Function. Configure
+the backend's `CORS_ORIGIN` to allow the Vercel frontend origin, and set its
+production `MONGODB_URI`, `JWT_SECRET`, and admin credentials in the backend
+hosting provider's environment settings. Do not commit `.env` files or use the
+example development secrets in production.
 
 ## Frontend migration
 
