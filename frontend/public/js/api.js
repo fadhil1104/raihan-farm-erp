@@ -7,9 +7,10 @@ const Api = (() => {
   const base = () => (localStorage.getItem(BASE_KEY) ?? window.RAIHAN_CONFIG.API_BASE ?? '').replace(/\/$/, '');
   const token = () => localStorage.getItem(TOKEN_KEY);
 
-  async function request(path, { method = 'GET', body, auth = true } = {}) {
+  async function request(path, { method = 'GET', body, auth = true, tokenOverride } = {}) {
     const headers = { 'Content-Type': 'application/json' };
-    if (auth && token()) headers.Authorization = 'Bearer ' + token();
+    const authToken = tokenOverride || token();
+    if (auth && authToken) headers.Authorization = 'Bearer ' + authToken;
     let res;
     try {
       res = await fetch(base() + '/api' + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -31,6 +32,9 @@ const Api = (() => {
     clearToken: () => localStorage.removeItem(TOKEN_KEY),
     onUnauthorized: (fn) => { onUnauthorized = fn; },
     login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password }, auth: false }),
+    createStaff: (employee, phone, password) => request('/auth/staff', { method: 'POST', body: { employee, phone, password } }),
+    createStaffAccount: (employeeId, phone, password) => request('/auth/staff', { method: 'POST', body: { employeeId, phone, password } }),
+    updateStaffProfile: (profile, tokenOverride) => request('/auth/me', { method: 'PUT', body: profile, tokenOverride }),
     me: () => request('/auth/me'),
     getState: () => request('/state'),
     putState: (state, replace = false) => request('/state' + (replace ? '?replace=true' : ''), { method: 'PUT', body: state }),

@@ -13,7 +13,7 @@ async function buildState(role) {
   }
   if (role !== 'admin') {
     // Staff never receives PINs, payroll, attendance, deliveries or subscriptions
-    state.employees = state.employees.map(({ pin, baseSalary, otRate, allowance, advance, ...rest }) =>
+    state.employees = state.employees.map(({ pin, phone, baseSalary, otRate, allowance, advance, ...rest }) =>
       ({ ...rest, baseSalary: 0, otRate: 0, allowance: 0, advance: 0 }));
     state.attendanceLogs = []; state.deliveries = []; state.subscriptions = [];
   }

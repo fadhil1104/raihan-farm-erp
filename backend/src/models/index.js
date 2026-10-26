@@ -39,7 +39,7 @@ const PosSale = model('PosSale', new Schema({
 }, opts));
 
 const Employee = model('Employee', new Schema({
-  ...base, id: Number, name: String, role: String, pin: String, baseSalary: Number, otRate: Number,
+  ...base, id: Number, name: String, phone: String, role: String, pin: String, baseSalary: Number, otRate: Number,
   allowance: Number, advance: Number, clockedIn: Boolean, lastClockIn: String
 }, opts));
 

@@ -106,6 +106,8 @@ The backend and MongoDB API remain independently runnable and deployable.
 |---|---|---|---|
 | POST | `/api/auth/login` | public | `{username,password}` → JWT |
 | GET | `/api/auth/me` | token | current user |
+| POST | `/api/auth/staff` | admin | Create an employee and login, or set up a login for an existing employee |
+| PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
 | PUT | `/api/state` | token | sync state changes |
 | PUT | `/api/state?replace=true` | admin | restore a backup |

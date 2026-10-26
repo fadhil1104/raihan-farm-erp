@@ -1072,6 +1072,49 @@ async function submitMobileQrClock() {
   }
 }
 
+function openStaffProfileModal() {
+  $('staff-profile-modal').classList.remove('hidden');
+  $('staff-profile-current-phone').value = '';
+  $('staff-profile-current-password').value = '';
+  $('staff-profile-name').value = '';
+  $('staff-profile-phone').value = '';
+  $('staff-profile-new-password').value = '';
+  $('staff-profile-confirm-password').value = '';
+}
+
+function closeStaffProfileModal() {
+  $('staff-profile-modal').classList.add('hidden');
+}
+
+async function saveStaffProfile() {
+  const currentPhone = $('staff-profile-current-phone').value.trim();
+  const currentPassword = $('staff-profile-current-password').value;
+  const name = $('staff-profile-name').value.trim();
+  const phone = $('staff-profile-phone').value.trim();
+  const newPassword = $('staff-profile-new-password').value;
+  const confirmPassword = $('staff-profile-confirm-password').value;
+  if (!currentPhone || !currentPassword || !name || !phone) {
+    return showToast('Enter your current sign-in details, name, and phone number.', 'error');
+  }
+  if (newPassword !== confirmPassword) return showToast('New passwords do not match.', 'error');
+  if (newPassword && newPassword.length < 8) return showToast('New password must be at least 8 characters.', 'error');
+
+  const button = $('staff-profile-save');
+  button.disabled = true;
+  button.innerText = 'Saving…';
+  try {
+    const login = await Api.login(currentPhone, currentPassword);
+    await Api.updateStaffProfile({ name, phone, currentPassword, newPassword }, login.token);
+    closeStaffProfileModal();
+    showToast('Your staff details were updated.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.innerText = 'Save my details';
+  }
+}
+
 async function toggleClock(empId) {
   try {
     const res = await Api.kioskClock(empId);
@@ -1102,19 +1145,49 @@ function saveManualAttendance() {
 
 function openAddEmployeeModal() { $('add-emp-modal').classList.toggle('hidden'); }
 
-function saveNewEmployee() {
+async function createExistingStaffAccount() {
+  const employeeId = Number($('existing-staff-account-employee').value);
+  const phone = $('existing-staff-account-phone').value.trim();
+  const password = $('existing-staff-account-password').value;
+  if (!employeeId || !phone || !password) return showToast('Select a staff member and enter their phone number and password.', 'error');
+  if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
+  try {
+    await Api.createStaffAccount(employeeId, phone, password);
+    const employee = state.employees.find((entry) => entry.id === employeeId);
+    if (employee) employee.phone = phone;
+    $('existing-staff-account-phone').value = '';
+    $('existing-staff-account-password').value = '';
+    saveState();
+    showToast('Staff login created. They can now sign in with their phone and password.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function saveNewEmployee() {
   const name = $('new-emp-name').value.trim();
-  if (!name) return showToast('Please enter the employee name.', 'error');
+  const phone = $('new-emp-phone').value.trim();
+  const password = $('new-emp-password').value;
+  if (!name || !phone || !password) return showToast('Enter the employee name, phone number, and password.', 'error');
+  if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
   const pin = String(Math.floor(1000 + Math.random() * 9000));
-  state.employees.push({
+  const employee = {
     id: Date.now(), name, role: $('new-emp-role').value, pin,
+    phone,
     baseSalary: Number($('new-emp-base').value) || 48000, otRate: Number($('new-emp-otrate').value) || 350,
     allowance: Number($('new-emp-allowance').value) || 6000, advance: 0, clockedIn: false, lastClockIn: null
-  });
-  $('new-emp-name').value = '';
-  $('add-emp-modal').classList.add('hidden');
-  saveState();
-  showToast(`${name} added (Mobile QR PIN: ${pin})!`, 'success');
+  };
+  try {
+    await Api.createStaff(employee, phone, password);
+    state.employees.push(employee);
+    ['new-emp-name', 'new-emp-phone', 'new-emp-password', 'new-emp-base', 'new-emp-otrate', 'new-emp-allowance']
+      .forEach((id) => { $(id).value = ''; });
+    $('add-emp-modal').classList.add('hidden');
+    saveState();
+    showToast(`${name} added. Staff can sign in with their phone and password; QR attendance PIN: ${pin}.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function updatePayrollField(empId, field, value) {
@@ -1576,6 +1649,7 @@ function renderAll() {
   filterEl.innerHTML = `<option value="ALL">All Employees (${state.employees.length})</option>` + state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
   filterEl.value = [...filterEl.options].some((o) => o.value === curFilter) ? curFilter : 'ALL';
   $('man-emp').innerHTML = state.employees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  $('existing-staff-account-employee').innerHTML = state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
   renderAttendanceLogs();
 
   // Payroll
