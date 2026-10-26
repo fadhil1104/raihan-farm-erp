@@ -55,28 +55,37 @@ The frontend is available at `http://localhost:8080`, the API at
 `http://localhost:5000`, and MongoDB at `localhost:27017`. The frontend web server
 proxies `/api` requests to the separate backend service.
 
-## Vercel frontend
+## Deploy the frontend on Vercel
 
-In Vercel, set the project's **Root Directory** to `frontend`. Its
-`vercel.json` runs `npm ci` and `npm run build` in the directory containing the
-frontend package and lockfile, publishes `dist`, and routes SPA paths to
-`index.html`. Do not set the Root Directory to `backend`; that selects the API
-package (which declares Node `>=18`) and leaves the frontend lockfile outside the
-build root. Alternatively, use the repository root as the Root Directory to use
-the root `vercel.json` commands and `frontend/dist` output.
+The Vercel project serves the frontend. The Express API and MongoDB must be
+deployed separately: the API is a long-running server, and MongoDB must be
+reachable from the API host (for example, use MongoDB Atlas).
 
-Set `VITE_API_BASE` in Vercel's environment variables for each environment to the
-public backend origin without a trailing `/api` (for example,
-`https://your-api.example.com`). This is a frontend build-time variable. The
-backend's `VITE_API_URL` setting is not read by the frontend build; configure
-`VITE_API_BASE` in Vercel instead.
+1. Import this repository into Vercel and set **Root Directory** to `frontend`.
+   Leave **Include source files outside of the Root Directory** disabled.
+   Vercel uses `frontend/vercel.json` and the frontend lockfile to install
+   dependencies, build the Vite app, publish `dist`, and route app paths to
+   `index.html`.
+2. Deploy the backend on a Node.js host with the working directory set to
+   `backend` and start command `npm start`. Configure these backend environment
+   variables in that host:
+   * `MONGODB_URI`: the production MongoDB connection string
+   * `JWT_SECRET`: a unique, long random secret
+   * `ADMIN_USERNAME` and `ADMIN_PASSWORD`: the initial admin account
+   * `CORS_ORIGIN`: the exact deployed Vercel origin, such as
+     `https://your-project.vercel.app` (add any custom domain origins as needed)
+   * `TIMEZONE`: `Asia/Colombo` if the default timezone is appropriate
+3. In Vercel, set `VITE_API_BASE` for Preview and Production to the public
+   backend origin, without a trailing slash or `/api` (for example,
+   `https://your-api.example.com`). This is a build-time frontend variable, so
+   redeploy after changing it.
+4. After both services are deployed, check
+   `https://your-api.example.com/api/health`, then open the Vercel URL and sign
+   in with the configured admin account.
 
-Deploy the Express/MongoDB backend separately; `backend/server.js` starts a
-long-running Express server and is not configured as a Vercel Function. Configure
-the backend's `CORS_ORIGIN` to allow the Vercel frontend origin, and set its
-production `MONGODB_URI`, `JWT_SECRET`, and admin credentials in the backend
-hosting provider's environment settings. Do not commit `.env` files or use the
-example development secrets in production.
+Do not commit `.env` files or use example development secrets in production.
+For local development, leave `VITE_API_BASE` unset; Vite proxies `/api` to
+`http://localhost:5000`.
 
 ## Frontend migration
 
