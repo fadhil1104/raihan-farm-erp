@@ -6,11 +6,11 @@ const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
 const clean = (doc) => { META.forEach((k) => delete doc[k]); return doc; };
 
 async function buildState(role) {
-  const state = {};
-  for (const c of collections) {
+  const entries = await Promise.all(collections.map(async (c) => {
     const rows = await c.Model.find().sort(c.sortNewest ? { createdAt: -1, _id: -1 } : { seq: 1 }).lean();
-    state[c.key] = rows.map(clean);
-  }
+    return [c.key, rows.map(clean)];
+  }));
+  const state = Object.fromEntries(entries);
   if (role !== 'admin') {
     // Staff never receives PINs, payroll, attendance, deliveries or subscriptions
     state.employees = state.employees.filter((employee) => !employee.archivedAt)

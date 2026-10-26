@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import legacyHtml from '../legacy.html?raw';
 import '../css/styles.css';
 
+localStorage.removeItem('raihan_erp_token');
 window.RAIHAN_API_BASE = import.meta.env.VITE_API_BASE || '';
 
 function LegacyApp() {
@@ -12,6 +13,9 @@ function LegacyApp() {
   useEffect(() => {
     const parsed = new DOMParser().parseFromString(legacyHtml, 'text/html');
     document.body.className = parsed.body.className;
+    if (!window.location.search.includes('qr=wall-checkin')) {
+      parsed.getElementById('login-modal')?.classList.remove('hidden');
+    }
     setMarkup(parsed.body.innerHTML);
   }, []);
 

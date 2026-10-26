@@ -249,13 +249,14 @@ function closeLoginModal() { if (currentUser) $('login-modal').classList.add('hi
 async function handleLogin() {
   const u = $('login-username').value.trim();
   const p = $('login-password').value;
+  let authenticated = false;
   try {
     const res = await Api.login(u, p);
     Api.setToken(res.token);
     currentUser = res.user;
+    authenticated = true;
     updateRoleSidebar();
     switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
-    $('login-modal').classList.add('hidden');
     $('login-password').value = '';
     savePending = false;
     state = await Api.getState();
@@ -263,11 +264,19 @@ async function handleLogin() {
     syncTodayIntoDailyVault();
     applyRolePermissions();
     switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
+    $('login-modal').classList.add('hidden');
     setSyncStatus('Connected to MongoDB');
     showToast(currentUser.role === 'admin' ? 'Welcome Admin! Full dashboard, reports & approvals unlocked.' : 'Logged in as Staff: POS Terminal & 1-Time Inventory Edit enabled.', currentUser.role === 'admin' ? 'success' : 'info');
   } catch (err) {
+    if (authenticated) {
+      Api.clearToken();
+      currentUser = null;
+      state = null;
+      updateRoleSidebar();
+      switchTab('pos');
+    }
     const box = $('login-error');
-    box.innerText = err.offline ? err.message : 'Invalid credentials.';
+    box.innerText = authenticated || err.offline ? err.message : 'Invalid credentials.';
     box.classList.remove('hidden');
   }
 }
@@ -1809,31 +1818,10 @@ async function bootstrap() {
   calculateSlaughterPreview();
 
   const scannedWall = window.location.search.includes('qr=wall-checkin');
-
-  if (Api.hasToken()) {
-    try {
-      currentUser = await Api.me();
-      const full = { admin: 'Admin (Full Access)', staff: 'Staff (POS & Inventory)' };
-      currentUser.label = currentUser.label || full[currentUser.role];
-      state = await Api.getState();
-      ensureStateCollections();
-      syncTodayIntoDailyVault();
-      applyRolePermissions();
-      switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
-      setSyncStatus('Connected to MongoDB');
-    } catch (err) {
-      currentUser = null; state = null;
-      if (err.offline) setSyncStatus('Server offline', false);
-      if (!err.offline) Api.clearToken();
-    }
-  }
-
-  if (!currentUser) {
-    // Staff who scan the wall QR only need the PIN check-in portal (no login)
-    if (scannedWall) openMobileQrPortal(); else openLoginModal();
-  } else if (scannedWall) {
-    openMobileQrPortal();
-  }
+  currentUser = null;
+  state = null;
+  Api.clearToken();
+  if (scannedWall) openMobileQrPortal(); else openLoginModal();
 }
 
 window.bootstrap = bootstrap;
