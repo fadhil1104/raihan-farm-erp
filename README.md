@@ -57,11 +57,13 @@ proxies `/api` requests to the separate backend service.
 
 ## Vercel frontend
 
-In Vercel, set the project's **Root Directory** to the repository root (`./`).
-The root `vercel.json` installs frontend dependencies from
-`frontend/package-lock.json`, builds the Vite app, publishes `frontend/dist`, and
-routes SPA paths to `index.html`. Do not set the Root Directory to `backend` or
-`frontend`: the configured install command runs from the repository root.
+In Vercel, set the project's **Root Directory** to `frontend`. Its
+`vercel.json` runs `npm ci` and `npm run build` in the directory containing the
+frontend package and lockfile, publishes `dist`, and routes SPA paths to
+`index.html`. Do not set the Root Directory to `backend`; that selects the API
+package (which declares Node `>=18`) and leaves the frontend lockfile outside the
+build root. Alternatively, use the repository root as the Root Directory to use
+the root `vercel.json` commands and `frontend/dist` output.
 
 Set `VITE_API_BASE` in Vercel's environment variables for each environment to the
 public backend origin without a trailing `/api` (for example,
