@@ -12,11 +12,11 @@ async function buildState(role) {
   }));
   const state = Object.fromEntries(entries);
   if (role !== 'admin') {
-    // Staff never receives PINs, payroll, attendance, deliveries or subscriptions
+    // Staff never receives PINs, payroll or attendance
     state.employees = state.employees.filter((employee) => !employee.archivedAt)
       .map(({ pin, phone, archivedAt, baseSalary, otRate, allowance, advance, ...rest }) =>
       ({ ...rest, baseSalary: 0, otRate: 0, allowance: 0, advance: 0 }));
-    state.attendanceLogs = []; state.deliveries = []; state.subscriptions = [];
+    state.attendanceLogs = [];
   }
   state.dailyVault = {};
   (await DailyVault.find().lean()).forEach((d) => { state.dailyVault[d.date] = clean(d); });

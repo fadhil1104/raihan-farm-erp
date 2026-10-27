@@ -95,8 +95,8 @@ const collections = [
   // clockedIn / lastClockIn are owned by the server (QR + kiosk endpoints) and never overwritten by a browser sync
   { key: 'employees',                 Model: Employee,          keyField: 'id',    adminOnly: true, protect: ['clockedIn', 'lastClockIn'] },
   { key: 'attendanceLogs',            Model: AttendanceLog,     keyField: 'id',    adminOnly: true, insertOnly: true, sortNewest: true },
-  { key: 'deliveries',                Model: Delivery,          keyField: 'id',    adminOnly: true },
-  { key: 'subscriptions',             Model: Subscription,      keyField: 'id',    adminOnly: true }
+  { key: 'deliveries',                Model: Delivery,          keyField: 'id' },
+  { key: 'subscriptions',             Model: Subscription,     keyField: 'id' }
 ];
 
 /*

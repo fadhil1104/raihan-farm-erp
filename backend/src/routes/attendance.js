@@ -22,8 +22,8 @@ async function toggleClock(emp, method) {
   const log = await AttendanceLog.findOne({ empId: emp.id, signOut: 'Active Shift' }).sort({ signInAt: -1 });
   let hours = 0, ot = 0;
   if (log) {
-    hours = log.signInAt ? +((now - log.signInAt) / 36e5).toFixed(2) : 8;  // seeded logs have no timestamp
-    ot = +Math.max(0, hours - 8).toFixed(2);   // standard shift = 8h, extra = overtime
+    hours = log.signInAt ? +((now - log.signInAt) / 36e5).toFixed(2) : 10;  // seeded logs have no timestamp
+    ot = +Math.max(0, hours - 10).toFixed(2);   // standard shift = 10h, extra = overtime
     log.signOut = stamp; log.hours = hours; log.ot = ot;
     await log.save();
   }

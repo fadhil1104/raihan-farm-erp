@@ -313,9 +313,9 @@ function updateRoleSidebar() {
 }
 
 function switchTab(tabId) {
-  const adminOnlyTabs = ['dashboard', 'slaughter', 'attendance', 'payroll', 'deliveries', 'coa'];
+  const adminOnlyTabs = ['dashboard', 'slaughter', 'attendance', 'payroll', 'coa'];
   if (currentUser && currentUser.role !== 'admin' && adminOnlyTabs.includes(tabId)) {
-    showToast('Access Restricted: Staff can only access POS & Dressed Inventory.', 'error');
+    showToast('Access Restricted: Staff can access POS, Dressed Inventory, and Deliveries & Weekly Subs.', 'error');
     tabId = 'pos';
   }
   ['dashboard', 'slaughter', 'inventory', 'pos', 'attendance', 'payroll', 'deliveries', 'coa'].forEach((t) => {
@@ -1159,7 +1159,7 @@ function saveManualAttendance() {
   state.attendanceLogs.unshift({
     id: Date.now(), empId: Number($('man-emp').value), date: $('man-date').value || getTodayDate(),
     signIn, signOut,
-    hours, ot: Math.max(0, hours - 8)
+    hours, ot: Math.max(0, hours - 10)
   });
   $('manual-log-form').classList.add('hidden');
   saveState();
