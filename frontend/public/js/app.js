@@ -351,7 +351,7 @@ async function handleLogin() {
     switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
     $('login-modal').classList.add('hidden');
     setSyncStatus('Connected to MongoDB');
-    showToast(currentUser.role === 'admin' ? 'Welcome Admin! Full dashboard, reports & approvals unlocked.' : 'Logged in as Staff: POS Terminal & 1-Time Inventory Edit enabled.', currentUser.role === 'admin' ? 'success' : 'info');
+    showToast(currentUser.role === 'admin' ? 'Welcome Admin! Full dashboard, reports, and inventory controls unlocked.' : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.', currentUser.role === 'admin' ? 'success' : 'info');
   } catch (err) {
     if (authenticated) {
       Api.clearToken();
@@ -584,10 +584,29 @@ function saveSlaughterEdit() {
   showToast(`Slaughter batch ${batch.id} updated.`, 'success');
 }
 
-// ---------- MODULE 3: inventory with 1-time staff edit lock ----------
-function submitInventoryEdit(id) {
+// ---------- MODULE 3: admin inventory edits and staff stock additions ----------
+async function submitInventoryEdit(id) {
   const item = state.inventory.find((i) => i.id === id);
   if (!item) return;
+  if (currentUser.role !== 'admin') {
+    const quantity = Number($(`inv-add-stock-${id}`).value);
+    const wholeQuantity = inventoryUnit(item) !== 'kg';
+    if (!Number.isFinite(quantity) || quantity <= 0 || (wholeQuantity && !Number.isInteger(quantity))) {
+      return showToast(wholeQuantity ? 'Enter a positive whole stock quantity.' : 'Enter a positive stock weight.', 'error');
+    }
+    try {
+      const updated = await Api.addInventoryStock(item.id, quantity);
+      if (inventoryUnit(item) === 'kg') item.stockKg = Number(updated.stockKg);
+      else item.stockQuantity = Number(updated.stockQuantity);
+      $(`inv-add-stock-${id}`).value = '';
+      saveState();
+      showToast(`Added ${quantity} ${inventoryUnitLabel(item)} to ${item.name}.`, 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+    return;
+  }
+
   const newPrice = Number($(`inv-price-${id}`).value);
   const newStock = Number($(`inv-stock-${id}`).value);
   const wholesaleInput = $(`inv-wholesale-${id}`);
@@ -605,52 +624,12 @@ function submitInventoryEdit(id) {
   const valuesChanged = newPrice !== inventoryPrice(item) || newStock !== inventoryStock(item);
   if (!detailsChanged && !valuesChanged) return showToast('No changes detected.', 'info');
 
-  if (currentUser.role === 'admin') {
-    item.name = newName;
-    item.source = newSource;
-    item.wholesalePrice = newWholesale;
-    setInventoryValues(item, newPrice, newStock);
-    saveState();
-    return showToast(`Admin updated ${item.name} immediately.`, 'success');
-  }
-  if (detailsChanged) return showToast('Only an admin can change item name, source, or wholesale price.', 'error');
-  if ((item.staffEditCount || 0) < 1) {
-    setInventoryValues(item, newPrice, newStock); item.staffEditCount = 1;
-    saveState();
-    showToast(`1st Staff Edit applied for ${item.name}. Item is now locked for further direct edits.`, 'info');
-  } else {
-    const reasonInput = $(`inv-reason-${id}`);
-    const reason = reasonInput && reasonInput.value.trim() ? reasonInput.value.trim() : 'Staff requested additional stock/price adjustment';
-    state.pendingInventoryApprovals.unshift({
-      reqId: 'REQ-' + Date.now().toString().slice(-6), itemId: item.id, itemName: item.name,
-      requestedBy: `${currentUser.username} (Staff)`,
-      time: `${getTodayDate()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-      oldPrice: inventoryPrice(item), newPrice, oldStock: inventoryStock(item),
-      newStock: wholeQuantity ? Math.round(newStock) : +newStock.toFixed(2), reason, status: 'Pending'
-    });
-    saveState();
-    showToast('1-Time Edit limit reached! Request sent to Admin Dashboard for approval.', 'info');
-  }
-}
-
-function approveInventoryRequest(reqId) {
-  if (currentUser.role !== 'admin') return;
-  const req = state.pendingInventoryApprovals.find((r) => r.reqId === reqId);
-  if (!req) return;
-  const item = state.inventory.find((i) => i.id === req.itemId);
-  if (item) setInventoryValues(item, Number(req.newPrice), Number(req.newStock));
-  req.status = 'Approved';
+  item.name = newName;
+  item.source = newSource;
+  item.wholesalePrice = newWholesale;
+  setInventoryValues(item, newPrice, newStock);
   saveState();
-  showToast(`Approved staff inventory update for ${req.itemName}!`, 'success');
-}
-
-function rejectInventoryRequest(reqId) {
-  if (currentUser.role !== 'admin') return;
-  const req = state.pendingInventoryApprovals.find((r) => r.reqId === reqId);
-  if (!req) return;
-  req.status = 'Rejected';
-  saveState();
-  showToast(`Rejected inventory request ${reqId}.`, 'error');
+  showToast(`Admin updated ${item.name} immediately.`, 'success');
 }
 
 function inventoryUnitFormChanged() {
@@ -684,7 +663,7 @@ function addInventoryItem() {
 
   const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'item'}-${Date.now()}`;
   const item = {
-    id, name, source, unitType, wholesalePrice, staffEditCount: 0,
+    id, name, source, unitType, wholesalePrice,
     ...(unitType === 'kg'
       ? { stockKg: 0, pricePerKg: price, minStockKg: minStock }
       : { stockQuantity: 0, pricePerUnit: price, minStockQuantity: minStock }),
@@ -699,13 +678,6 @@ function addInventoryItem() {
   $('new-inv-pack-grams').value = '';
   saveState();
   showToast(`${name} added with zero ${inventoryUnitLabel(item)} stock.`, 'success');
-}
-
-function resetAllStaffEditLocks() {
-  if (currentUser.role !== 'admin') return;
-  state.inventory.forEach((i) => { i.staffEditCount = 0; });
-  saveState();
-  showToast('All 1-time staff inventory edit locks have been reset!', 'success');
 }
 
 // ---------- financials, receivables & archive ----------
@@ -1745,18 +1717,16 @@ function renderInventoryCards() {
     : items.length === 0
       ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items start with that search text.</div>'
       : items.map((item) => {
-    const locked = !isAdmin && (item.staffEditCount || 0) >= 1;
     const unit = inventoryUnit(item), priceLabel = inventoryPriceLabel(item);
     const stockStep = unit === 'kg' ? '0.1' : '1';
-    const stockLabel = unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${inventoryUnitLabel(item)}${unit === 'packet' || unit === 'unit' ? 's' : ''})`;
     return `
-      <div class="card p-5 flex flex-col justify-between space-y-4 border ${locked ? 'border-amber-500/40' : 'border-slate-800'}">
+      <div class="card p-5 flex flex-col justify-between space-y-4 border border-slate-800">
         <div class="flex justify-between items-start gap-2">
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-xs font-bold uppercase text-yellow-400">${esc(item.source)}</span>
               <span class="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-slate-300">${esc(inventoryUnitLabel(item))}</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isAdmin ? 'bg-yellow-400/20 text-yellow-300' : locked ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}">${isAdmin ? 'Admin: Unlimited Edits' : locked ? 'Locked (1/1 Staff Edit Used)' : 'Staff: 1 Direct Edit Available'}</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isAdmin ? 'bg-yellow-400/20 text-yellow-300' : 'bg-emerald-500/20 text-emerald-300'}">${isAdmin ? 'Admin: Inventory Editing' : 'Staff: Stock Additions Only'}</span>
             </div>
             <h3 class="text-lg font-black text-white mt-1">${esc(item.name)}</h3>
           </div>
@@ -1769,17 +1739,15 @@ function renderInventoryCards() {
           <div class="sm:col-span-2"><label class="block text-xs text-slate-400 mb-1">Wholesale Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-wholesale-${esc(item.id)}" value="${Number(item.wholesalePrice || 0)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
         </div>` : ''}
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
-          <div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
-          <div><label class="block text-xs text-slate-400 mb-1">${esc(stockLabel)}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          ${isAdmin
+            ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
+            : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
+          <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`}
         </div>
-        ${locked ? `
-        <div class="space-y-2 bg-slate-900/90 p-3 rounded-xl border border-amber-500/30">
-          <label class="block text-[11px] text-amber-300 font-bold"><i class="fa-solid fa-lock mr-1"></i> You already edited this item once. Enter reason to request Admin Approval:</label>
-          <input type="text" id="inv-reason-${esc(item.id)}" placeholder="Reason for additional adjustment" class="w-full px-3 py-2 rounded-lg text-xs">
-        </div>` : ''}
         <div class="flex justify-end">
-          <button onclick="submitInventoryEdit('${esc(item.id)}')" class="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition ${locked ? 'bg-amber-500 hover:bg-amber-400 text-slate-950' : 'bg-yellow-400 hover:bg-yellow-300 text-slate-950'}">
-            <i class="fa-solid ${locked ? 'fa-paper-plane' : 'fa-floppy-disk'} mr-1"></i> ${isAdmin ? 'Save Inventory Update' : locked ? 'Request Admin Approval' : 'Apply 1-Time Staff Edit'}
+          <button onclick="submitInventoryEdit('${esc(item.id)}')" class="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition bg-yellow-400 hover:bg-yellow-300 text-slate-950">
+            <i class="fa-solid ${isAdmin ? 'fa-floppy-disk' : 'fa-plus'} mr-1"></i> ${isAdmin ? 'Save Inventory Update' : 'Add Stock'}
           </button>
         </div>
       </div>`;
@@ -1889,10 +1857,6 @@ function renderAll() {
       </tr>`;
   }).join('');
 
-  // Approval queue
-  const pendingList = state.pendingInventoryApprovals.filter((r) => r.status === 'Pending');
-  const badge = $('nav-approval-badge');
-  if (pendingList.length > 0 && isAdmin) { badge.classList.remove('hidden'); badge.innerText = pendingList.length; } else badge.classList.add('hidden');
   const lowStockCount = state.inventory.filter((item) => inventoryStock(item) <= inventoryMinStock(item)).length;
   const lowStockBadge = $('nav-low-stock-badge');
   if (lowStockCount > 0 && isAdmin) {
@@ -1903,30 +1867,6 @@ function renderAll() {
     lowStockBadge.classList.add('hidden');
     lowStockBadge.removeAttribute('aria-label');
   }
-
-  $('admin-approval-list').innerHTML = state.pendingInventoryApprovals.length === 0
-    ? `<div class="text-xs text-slate-400 p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-center">No staff inventory edit requests pending approval.</div>`
-    : state.pendingInventoryApprovals.map((req) => {
-      const item = state.inventory.find((entry) => entry.id === req.itemId);
-      const unitLabel = item ? inventoryUnitLabel(item) : 'kg';
-      const priceLabel = item ? inventoryPriceLabel(item) : 'per kg';
-      return `
-      <div class="p-3.5 rounded-xl bg-slate-900/90 border ${req.status === 'Pending' ? 'border-yellow-400/50' : 'border-slate-800'} flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-        <div class="space-y-1">
-          <div class="flex items-center gap-2">
-            <span class="font-black text-yellow-400">${esc(req.reqId)}</span><span class="font-bold text-white text-sm">${esc(req.itemName)}</span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${req.status === 'Pending' ? 'bg-amber-500/20 text-amber-300' : req.status === 'Approved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${esc(req.status)}</span>
-          </div>
-          <p class="text-slate-300">Price: <span class="line-through text-slate-500">Rs.${req.oldPrice}</span> &rarr; <strong class="text-yellow-400">Rs.${req.newPrice} ${esc(priceLabel)}</strong> | Stock: <span class="line-through text-slate-500">${req.oldStock} ${esc(unitLabel)}</span> &rarr; <strong class="text-emerald-400">${req.newStock} ${esc(unitLabel)}</strong></p>
-          <p class="text-[11px] text-slate-400">By: ${esc(req.requestedBy)} at ${esc(req.time)} • Reason: <em>"${esc(req.reason)}"</em></p>
-        </div>
-        ${req.status === 'Pending' ? `
-        <div class="flex items-center gap-2 shrink-0">
-          <button onclick="approveInventoryRequest('${esc(req.reqId)}')" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1"><i class="fa-solid fa-check"></i> Approve Change</button>
-          <button onclick="rejectInventoryRequest('${esc(req.reqId)}')" class="bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 font-bold px-3 py-2 rounded-xl text-xs transition">Reject</button>
-        </div>` : ''}
-      </div>`;
-    }).join('');
 
   renderAnnualAnalytics();
   renderCOA();

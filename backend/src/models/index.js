@@ -14,7 +14,7 @@ const InventoryItem = model('InventoryItem', new Schema({
   stockKg: { type: Number, default: 0 }, pricePerKg: { type: Number, default: 0 },
   minStockKg: { type: Number, default: 0 }, stockQuantity: { type: Number, default: 0 },
   pricePerUnit: { type: Number, default: 0 }, minStockQuantity: { type: Number, default: 0 },
-  packWeightGrams: Number, wholesalePrice: { type: Number, default: 0 }, staffEditCount: { type: Number, default: 0 }
+  packWeightGrams: Number, wholesalePrice: { type: Number, default: 0 }
 }, opts));
 
 const InventoryApproval = model('InventoryApproval', new Schema({

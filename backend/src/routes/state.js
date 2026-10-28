@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { collections, DailyVault } = require('../models');
+const { collections, DailyVault, InventoryItem } = require('../models');
 const { requireAuth } = require('../middleware/auth');
 
 const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
@@ -25,6 +25,7 @@ async function buildState(role) {
 
 async function syncCollection(c, items, replace) {
   const docs = items.map((it, i) => ({ ...it, uid: String(it[c.keyField]), seq: i }));
+  let result;
   if (docs.length) {
     const ops = docs.map((doc) => {
       if (!replace && c.insertOnly) {
@@ -36,9 +37,41 @@ async function syncCollection(c, items, replace) {
       if (Object.keys(onInsert).length) update.$setOnInsert = onInsert;
       return { updateOne: { filter: { uid: doc.uid }, update, upsert: true } };
     });
-    await c.Model.bulkWrite(ops);
+    result = await c.Model.bulkWrite(ops);
   }
   if (replace) await c.Model.deleteMany({ uid: { $nin: docs.map((d) => d.uid) } });
+  return result;
+}
+
+async function deductSoldInventory(sales) {
+  const quantities = new Map();
+  sales.forEach((sale) => {
+    if (Array.isArray(sale.itemsDetails)) {
+      sale.itemsDetails.forEach((detail) => {
+        const id = String(detail.id || '');
+        const field = detail.unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+        const quantity = Number(detail.quantity);
+        if (id && Number.isFinite(quantity) && quantity > 0) {
+          if (!quantities.has(id)) quantities.set(id, { field, quantity: 0 });
+          quantities.get(id).quantity += quantity;
+        }
+      });
+    } else {
+      Object.entries(sale.itemsBreakdown || {}).forEach(([id, quantity]) => {
+        const amount = Number(quantity);
+        if (Number.isFinite(amount) && amount > 0) {
+          if (!quantities.has(id)) quantities.set(id, { field: 'stockKg', quantity: 0 });
+          quantities.get(id).quantity += amount;
+        }
+      });
+    }
+  });
+
+  if (!quantities.size) return;
+  const ops = [...quantities].map(([id, { field, quantity }]) => ({
+    updateOne: { filter: { id }, update: { $inc: { [field]: -quantity } } }
+  }));
+  await InventoryItem.bulkWrite(ops);
 }
 
 // GET /api/state -> whole app state (same shape the old localStorage object had)
@@ -46,35 +79,27 @@ router.get('/', requireAuth, async (req, res) => {
   res.json(await buildState(req.user.role));
 });
 
-// PUT /api/state -> sync app state to MongoDB (staff: POS, customer, and limited inventory fields)
+// PUT /api/state -> sync app state; staff inventory stock is changed only by stock additions and POS sales.
 // ?replace=true (admin) makes the database exactly match the payload - used by "Restore Backup"
 router.put('/', requireAuth, async (req, res) => {
   const body = req.body || {};
   const isAdmin = req.user.role === 'admin';
   const replace = isAdmin && req.query.replace === 'true';
+  const newlyCreatedSales = [];
   for (const c of collections) {
     if (c.adminOnly && !isAdmin) continue;
     if (!Array.isArray(body[c.key])) continue;
-    let items = body[c.key].filter((x) => x && x[c.keyField] !== undefined && x[c.keyField] !== null);
-    if (c.key === 'inventory' && !isAdmin) {
-      const ids = items.map((item) => String(item.id));
-      const storedItems = await c.Model.find({ uid: { $in: ids } }).lean();
-      const storedById = new Map(storedItems.map((item) => [String(item.id), item]));
-      const staffEditableFields = ['stockKg', 'pricePerKg', 'stockQuantity', 'pricePerUnit', 'staffEditCount'];
-      items = items.flatMap((item) => {
-        const stored = storedById.get(String(item.id));
-        if (!stored) return [];
-        const storedData = Object.fromEntries(Object.entries(stored)
-          .filter(([key]) => !['_id', '__v', 'createdAt', 'updatedAt'].includes(key)));
-        const safeItem = { ...storedData, id: item.id };
-        staffEditableFields.forEach((field) => {
-          if (field in item) safeItem[field] = item[field];
-        });
-        return [safeItem];
+    if (c.key === 'inventory' && !isAdmin) continue;
+    const items = body[c.key].filter((x) => x && x[c.keyField] !== undefined && x[c.keyField] !== null);
+    const result = await syncCollection(c, items, replace);
+    if (!isAdmin && c.key === 'posSales' && result?.upsertedIds) {
+      Object.keys(result.upsertedIds).forEach((index) => {
+        const sale = items[Number(index)];
+        if (sale) newlyCreatedSales.push(sale);
       });
     }
-    await syncCollection(c, items, replace);
   }
+  if (!isAdmin) await deductSoldInventory(newlyCreatedSales);
   if (body.dailyVault && typeof body.dailyVault === 'object') {
     const ops = Object.entries(body.dailyVault).map(([date, day]) => ({
       updateOne: { filter: { uid: date }, update: { $set: { ...day, date, uid: date } }, upsert: true }
@@ -82,6 +107,28 @@ router.put('/', requireAuth, async (req, res) => {
     if (ops.length) await DailyVault.bulkWrite(ops);
   }
   res.json({ ok: true, savedAt: new Date().toISOString() });
+});
+
+router.post('/inventory/:id/stock', requireAuth, async (req, res) => {
+  const item = await InventoryItem.findOne({ id: req.params.id });
+  if (!item) return res.status(404).json({ error: 'Inventory item not found' });
+
+  const quantity = Number(req.body.quantity);
+  const unitType = item.unitType || 'kg';
+  if (!Number.isFinite(quantity) || quantity <= 0 || (unitType !== 'kg' && !Number.isInteger(quantity))) {
+    return res.status(400).json({ error: unitType === 'kg'
+      ? 'Enter a positive stock weight.'
+      : 'Enter a positive whole stock quantity.' });
+  }
+
+  const stockField = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+  const updated = await InventoryItem.findOneAndUpdate(
+    { id: req.params.id },
+    { $inc: { [stockField]: quantity } },
+    { new: true, runValidators: true }
+  );
+  if (!updated) return res.status(404).json({ error: 'Inventory item not found' });
+  res.json({ id: updated.id, stockKg: updated.stockKg, stockQuantity: updated.stockQuantity });
 });
 
 module.exports = router;

@@ -366,7 +366,6 @@
           <span class="flex items-center gap-3 truncate"><i class="fa-solid fa-chart-pie w-5 text-center"></i><span class="truncate nav-title">1. Admin Dashboard</span></span>
           <span class="flex items-center gap-1.5">
             <span id="nav-low-stock-badge" title="Low-stock alerts" class="hidden px-1.5 py-0.5 text-[10px] font-black rounded-full bg-red-600 text-white"></span>
-            <span id="nav-approval-badge" class="hidden px-1.5 py-0.5 text-[10px] font-black rounded-full bg-red-600 text-white"></span>
           </span>
         </button>
         <button onclick="switchTab('slaughter')" id="nav-slaughter" class="admin-only-nav w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-slate-300 hover:bg-slate-900 transition"><i class="fa-solid fa-scale-balanced w-5 text-center text-yellow-400"></i><span class="truncate nav-title">2. Farm & Slaughter</span></button>
@@ -494,17 +493,6 @@
           </div>
           <div class="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex justify-between"><span>Includes Weekly Subscriptions</span><span class="text-emerald-400 font-semibold"><i class="fa-brands fa-whatsapp mr-1"></i>WhatsApp Ready</span></div>
         </div>
-      </div>
-
-      <div class="card-highlight p-5 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-          <div>
-            <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-shield-halved"></i> Staff Inventory Edit Approval Queue (2nd+ Edit Requests)</h3>
-            <p class="text-xs text-slate-400">Staff can edit an inventory item only <strong>1 time</strong> directly. Any additional stock or price changes by staff require your approval below.</p>
-          </div>
-          <button onclick="resetAllStaffEditLocks()" class="bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 px-3.5 py-2 rounded-xl border border-slate-700 transition shrink-0"><i class="fa-solid fa-unlock mr-1 text-yellow-400"></i> Reset All 1-Time Staff Locks</button>
-        </div>
-        <div id="admin-approval-list" class="space-y-2.5"></div>
       </div>
 
       <!-- LIFETIME ARCHIVE -->
