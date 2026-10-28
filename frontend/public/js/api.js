@@ -42,6 +42,7 @@ const Api = (() => {
     putState: (state, replace = false) => request('/state' + (replace ? '?replace=true' : ''), { method: 'PUT', body: state }),
     roster: () => request('/attendance/roster', { auth: false }),
     qrClock: (empId, pin) => request('/attendance/qr-clock', { method: 'POST', body: { empId, pin }, auth: false }),
-    kioskClock: (empId) => request('/attendance/clock', { method: 'POST', body: { empId } })
+    kioskClock: (empId) => request('/attendance/clock', { method: 'POST', body: { empId } }),
+    manualSignOut: (empId) => request('/attendance/manual-sign-out', { method: 'POST', body: { empId } })
   };
 })();

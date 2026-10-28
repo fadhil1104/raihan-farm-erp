@@ -1147,6 +1147,22 @@ async function toggleClock(empId) {
   } catch (err) { showToast(err.message, 'error'); }
 }
 
+async function manualSignOut(empId, button) {
+  button.disabled = true;
+  button.innerText = 'Signing Out…';
+  try {
+    const res = await Api.manualSignOut(empId);
+    showToast(res.message, 'info');
+    await flushNow();
+    await pullFromServer();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.innerHTML = '<i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out';
+  }
+}
+
 function toggleManualLogForm() { $('manual-log-form').classList.toggle('hidden'); }
 
 function saveManualAttendance() {
@@ -1794,6 +1810,7 @@ function renderAttendanceLogs() {
         <td class="py-3 px-4 ${l.signOut === 'Active Shift' ? 'text-yellow-400 font-bold' : 'text-slate-300'}">${esc(l.signOut)}</td>
         <td class="py-3 px-4 font-medium">${Number(l.hours).toFixed(1)} hrs</td>
         <td class="py-3 px-4 text-yellow-400 font-bold">+${Number(l.ot).toFixed(1)} hrs</td>
+        <td class="py-3 px-4">${l.signOut === 'Active Shift' ? `<button onclick="manualSignOut(${l.empId}, this)" class="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap"><i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out</button>` : '—'}</td>
       </tr>`;
   }).join('');
 }
