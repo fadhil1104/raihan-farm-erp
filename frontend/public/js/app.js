@@ -47,6 +47,9 @@ let state = null;                       // loaded from the API after login
 let currentUser = null;                 // { username, role, label }
 let selectedPosCategoryId = null;
 let posCart = [];
+let posIncomePeriod = '12H';
+let posIncomeMonth = getTodayDate().slice(0, 7);
+let posIncomeYear = String(new Date().getFullYear());
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
 let selectedArchiveDate = getTodayDate();
 let deferredPwaPrompt = null;
@@ -58,6 +61,87 @@ const todaysPosSales = () => {
   const today = getTodayDate();
   return (state.posSales || []).filter((s) => s.date === today);
 };
+
+function setPosIncomePeriod(period) {
+  posIncomePeriod = period;
+  renderPosSalesHistory();
+}
+
+function updatePosIncomeDateFilter() {
+  posIncomeMonth = $('pos-income-month').value || posIncomeMonth;
+  posIncomeYear = $('pos-income-year').value || posIncomeYear;
+  renderPosSalesHistory();
+}
+
+function getPosSaleTimestamp(sale) {
+  const date = String(sale.date || '');
+  const time = String(sale.time || '00:00').trim();
+  const match = time.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !match) return null;
+
+  let hours = Number(match[1]);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    hours = (hours % 12) + (meridiem === 'PM' ? 12 : 0);
+  }
+  if (hours > 23 || Number(match[2]) > 59) return null;
+  const timestamp = new Date(`${date}T${pad2(hours)}:${match[2]}:00`).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function renderPosSalesHistory() {
+  if (!state) return;
+  const periodSelect = $('pos-income-period');
+  const monthInput = $('pos-income-month');
+  const yearInput = $('pos-income-year');
+  const monthFilter = $('pos-income-month-filter');
+  const yearFilter = $('pos-income-year-filter');
+  if (periodSelect) periodSelect.value = posIncomePeriod;
+  if (monthInput && monthInput.value !== posIncomeMonth) monthInput.value = posIncomeMonth;
+  if (yearInput && yearInput.value !== posIncomeYear) yearInput.value = posIncomeYear;
+  monthFilter?.classList.toggle('hidden', posIncomePeriod !== 'MONTH');
+  yearFilter?.classList.toggle('hidden', posIncomePeriod !== 'YEAR');
+
+  const now = Date.now();
+  const windowMs = posIncomePeriod === '12H' ? 12 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const sales = (state.posSales || []).filter((sale) => {
+    const date = String(sale.date || '');
+    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
+    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
+    const timestamp = getPosSaleTimestamp(sale);
+    return timestamp !== null && timestamp <= now && timestamp >= now - windowMs;
+  });
+
+  let cashIncome = 0;
+  let cardIncome = 0;
+  sales.forEach((sale) => {
+    const payment = String(sale.payment || '').toUpperCase();
+    if (payment === 'CASH') cashIncome += Number(sale.totalRs) || 0;
+    else if (payment === 'CARD' || payment === 'QR / TRANSFER') cardIncome += Number(sale.totalRs) || 0;
+  });
+  $('pos-income-cash').innerText = `Rs. ${cashIncome.toLocaleString()}`;
+  $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
+  $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
+
+  const periodLabel = posIncomePeriod === '12H' ? 'Past 12 Hours'
+    : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
+    : posIncomePeriod === 'MONTH' ? `Month of ${posIncomeMonth}`
+    : `Year ${posIncomeYear}`;
+  $('pos-income-period-label').innerText = `${periodLabel} — Total Collected`;
+  $('pos-history-heading').innerText = `${periodLabel} — Completed POS Transactions`;
+  $('pos-history-tbody').innerHTML = sales.length === 0
+    ? `<tr><td colspan="6" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
+    : sales.map((p) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-3 px-3"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
+      <td class="py-3 px-3 font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}</td>
+      <td class="py-3 px-3 text-slate-300 text-xs">${esc(p.itemsSummary)}</td>
+      <td class="py-3 px-3 font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
+      <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
+      <td class="py-3 px-3 text-right font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
+    </tr>`).join('');
+}
 
 // ---------- server sync ----------
 let saveTimer = null, savePending = false, saveInFlight = false, stateVersion = 0;
@@ -1677,17 +1761,7 @@ function renderAll() {
   renderSlaughterProducts();
   updatePosLinePreview();
   renderPosCart();
-  $('pos-history-tbody').innerHTML = todays.length === 0
-    ? '<tr><td colspan="6" class="py-6 text-center text-sm text-slate-400">No sales recorded today.</td></tr>'
-    : todays.map((p) => `
-    <tr class="hover:bg-slate-800/40 transition">
-      <td class="py-3 px-3"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.time)}</span></td>
-      <td class="py-3 px-3 font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}</td>
-      <td class="py-3 px-3 text-slate-300 text-xs">${esc(p.itemsSummary)}</td>
-      <td class="py-3 px-3 font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
-      <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
-      <td class="py-3 px-3 text-right font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
-    </tr>`).join('');
+  renderPosSalesHistory();
 
   // Attendance kiosk
   $('kiosk-cards').innerHTML = activeEmployees.length ? activeEmployees.map((e) => {

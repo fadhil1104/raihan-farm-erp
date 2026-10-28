@@ -808,8 +808,44 @@
           </div>
         </div>
       </div>
-      <div class="card p-5 overflow-x-auto">
-        <h3 class="font-bold text-base text-white mb-3">Today's Completed POS Transactions (Deducted from Shop Inventory)</h3>
+      <div class="card p-5 space-y-4">
+        <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+          <div>
+            <h3 class="font-bold text-base text-white">POS Income Summary</h3>
+            <p class="text-xs text-slate-400">Cash and card/QR/transfer collected; credit sales are excluded until payment.</p>
+          </div>
+          <div class="flex flex-wrap items-end gap-2">
+            <label for="pos-income-period" class="text-xs text-slate-400 font-semibold">Period</label>
+            <select id="pos-income-period" onchange="setPosIncomePeriod(this.value)" class="px-3 py-2 rounded-lg text-sm">
+              <option value="12H">Past 12 Hours</option>
+              <option value="WEEK">Weekly (Past 7 Days)</option>
+              <option value="MONTH">Monthly</option>
+              <option value="YEAR">Yearly</option>
+            </select>
+            <label id="pos-income-month-filter" class="hidden text-xs text-slate-400 font-semibold">Select month
+              <input type="month" id="pos-income-month" onchange="updatePosIncomeDateFilter()" class="ml-1 px-3 py-2 rounded-lg text-sm">
+            </label>
+            <label id="pos-income-year-filter" class="hidden text-xs text-slate-400 font-semibold">Select year
+              <input type="number" id="pos-income-year" min="2000" max="9999" step="1" onchange="updatePosIncomeDateFilter()" class="ml-1 w-24 px-3 py-2 rounded-lg text-sm">
+            </label>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+            <span class="text-[10px] uppercase font-bold text-slate-400 block">Cash Income</span>
+            <strong id="pos-income-cash" class="text-lg font-black text-emerald-400">Rs. 0</strong>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+            <span class="text-[10px] uppercase font-bold text-slate-400 block">Card / QR / Transfer Income</span>
+            <strong id="pos-income-card" class="text-lg font-black text-sky-400">Rs. 0</strong>
+          </div>
+          <div class="rounded-xl border border-yellow-500/30 bg-slate-950/70 p-3">
+            <span id="pos-income-period-label" class="text-[10px] uppercase font-bold text-yellow-400 block">Past 12 Hours — Total Collected</span>
+            <strong id="pos-income-total" class="text-lg font-black text-white">Rs. 0</strong>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+        <h3 id="pos-history-heading" class="font-bold text-sm text-white mb-3">Past 12 Hours — Completed POS Transactions</h3>
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
@@ -818,6 +854,7 @@
           </thead>
           <tbody id="pos-history-tbody" class="divide-y divide-slate-800"></tbody>
         </table>
+        </div>
       </div>
     </section>
 
