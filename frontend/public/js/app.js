@@ -52,6 +52,7 @@ let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
 let selectedArchiveDate = getTodayDate();
+let archiveDateRange = null;
 let deferredPwaPrompt = null;
 let qrRoster = [];
 
@@ -711,11 +712,48 @@ function setArchiveGranularity(mode) {
 function onCalendarDateChange(dateStr) {
   if (!dateStr) return;
   selectedArchiveDate = dateStr;
+  archiveDateRange = null;
   setArchiveGranularity('DATE');
   showToast(`Selected ${dateStr}. Only saved records are displayed.`, 'info');
 }
+
+function toggleArchiveDateRange(enabled = true) {
+  const controls = $('archive-date-range-controls');
+  if (enabled) {
+    if (!archiveDateRange) archiveDateRange = { from: selectedArchiveDate, to: selectedArchiveDate };
+    $('archive-range-from').value = archiveDateRange.from;
+    $('archive-range-to').value = archiveDateRange.to;
+    setArchiveGranularity('DATE');
+  } else {
+    archiveDateRange = null;
+  }
+  controls.classList.toggle('hidden', !enabled);
+  $('archive-calendar-picker').classList.toggle('hidden', enabled);
+  $('archive-date-label').innerHTML = enabled
+    ? '<i class="fa-regular fa-calendar-check mr-1"></i>Custom Range:'
+    : '<i class="fa-regular fa-calendar-check mr-1"></i>Select Date:';
+  ['archive-today-button', 'archive-previous-day', 'archive-next-day'].forEach((id) => {
+    $(id).classList.toggle('hidden', enabled);
+  });
+  $('archive-range-toggle').classList.toggle('hidden', enabled);
+  if (state) renderAnnualAnalytics();
+}
+
+function applyArchiveDateRange() {
+  const from = $('archive-range-from').value;
+  const to = $('archive-range-to').value;
+  if (!from || !to) return showToast('Select both the start and end dates.', 'error');
+  if (from > to) return showToast('The start date must be on or before the end date.', 'error');
+  archiveDateRange = { from, to };
+  selectedArchiveDate = from;
+  renderAnnualAnalytics();
+  showToast(`Showing records from ${from} to ${to}.`, 'info');
+}
+
 function jumpToCalendarDate(dateStr) {
   selectedArchiveDate = dateStr;
+  archiveDateRange = null;
+  if (!$('archive-date-range-controls').classList.contains('hidden')) toggleArchiveDateRange(false);
   const picker = $('archive-calendar-picker');
   if (picker) picker.value = dateStr;
   setArchiveGranularity('DATE');
@@ -740,25 +778,41 @@ function getDaySnapshot(dateStr) {
 function renderCalendarDayInspector() {
   const picker = $('archive-calendar-picker');
   if (picker && picker.value !== selectedArchiveDate) picker.value = selectedArchiveDate;
-  const snap = getDaySnapshot(selectedArchiveDate);
-  const isToday = selectedArchiveDate === getTodayDate();
-  const hasDailyRecord = Boolean(snap.inventorySnapshot.length || snap.posSales.length || snap.slaughterBatches.length);
-  $('cal-selected-date-heading').innerText = `${selectedArchiveDate} ${hasDailyRecord ? (isToday ? '(Today — Live Shop Record)' : '(Permanent Archive Record)') : '(No saved records)'}`;
-  const dayPosTotal = snap.posSales.reduce((s, p) => s + Number(p.totalRs || 0), 0);
-  const daySoldKg = snap.inventorySnapshot.length
-    ? snap.inventorySnapshot.reduce((s, i) => s + Number(i.soldKg || 0), 0)
-    : snap.posSales.reduce((s, sale) => s + Number(sale.totalKg || 0), 0);
-  const daySlaughterKg = snap.inventorySnapshot.length
-    ? snap.inventorySnapshot.reduce((s, i) => s + Number(i.slaughterInKg || 0), 0)
-    : snap.slaughterBatches.reduce((s, batch) => s + Number(batch.actualKg || 0), 0);
-  $('cal-day-pos-badge').innerText = snap.posSales.length ? `Day POS Sales: Rs. ${dayPosTotal.toLocaleString()}` : 'No sales recorded';
-  $('cal-day-kg-badge').innerText = snap.posSales.length ? `Dressed Sold: ${daySoldKg.toFixed(2)} kg` : 'No sales recorded';
-  $('cal-day-slaughter-badge').innerText = snap.slaughterBatches.length ? `Farm Slaughter In: +${daySlaughterKg.toFixed(2)} kg` : 'No slaughter recorded';
-  $('cal-day-tx-count').innerText = hasDailyRecord
-    ? `${snap.posSales.length} POS Bills • ${snap.slaughterBatches.length} Slaughter Batches`
-    : 'No records for this date';
+  const isRange = Boolean(archiveDateRange);
+  const range = archiveDateRange;
+  const snap = isRange ? null : getDaySnapshot(selectedArchiveDate);
+  const sales = isRange
+    ? (state.posSales || []).filter((sale) => sale.date >= range.from && sale.date <= range.to)
+    : snap.posSales;
+  const batches = isRange
+    ? (state.slaughterBatches || []).filter((batch) => {
+      const date = String(batch.date || '').slice(0, 10);
+      return date >= range.from && date <= range.to;
+    })
+    : snap.slaughterBatches;
+  const dateLabel = isRange ? `${range.from} to ${range.to}` : selectedArchiveDate;
+  const hasDailyRecord = Boolean(snap && (snap.inventorySnapshot.length || sales.length || batches.length));
+  const dayPosTotal = sales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
+  const daySoldKg = sales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0);
+  const daySlaughterKg = batches.reduce((total, batch) => total + Number(batch.actualKg || 0), 0);
+  $('cal-selected-date-heading').innerText = isRange
+    ? `${dateLabel} (Custom Date Range)`
+    : `${selectedArchiveDate} ${hasDailyRecord ? (selectedArchiveDate === getTodayDate() ? '(Today — Live Shop Record)' : '(Permanent Archive Record)') : '(No saved records)'}`;
+  $('cal-date-snapshot-title').innerText = isRange ? 'Selected Date Range Summary' : 'Selected Calendar Date Snapshot';
+  $('cal-day-sales-title').innerHTML = isRange
+    ? '<i class="fa-solid fa-receipt"></i> POS Sales Bills & Slaughter Logs in Date Range'
+    : "<i class=\"fa-solid fa-receipt\"></i> That Day's POS Sales Bills & Slaughter Logs";
+  $('cal-day-pos-badge').innerText = sales.length ? `${isRange ? 'Range' : 'Day'} POS Sales: Rs. ${dayPosTotal.toLocaleString()}` : 'No sales recorded';
+  $('cal-day-kg-badge').innerText = sales.length ? `Dressed Sold: ${daySoldKg.toFixed(2)} kg` : 'No sales recorded';
+  $('cal-day-slaughter-badge').innerText = batches.length ? `Farm Slaughter In: +${daySlaughterKg.toFixed(2)} kg` : 'No slaughter recorded';
+  $('cal-day-tx-count').innerText = isRange
+    ? `${sales.length} POS Bills • ${batches.length} Slaughter Batches`
+    : hasDailyRecord ? `${sales.length} POS Bills • ${batches.length} Slaughter Batches` : 'No records for this date';
+  $('calendar-day-inventory-panel').classList.toggle('hidden', isRange);
+  $('calendar-day-sales-panel').classList.toggle('lg:col-span-12', isRange);
+  $('calendar-day-sales-panel').classList.toggle('lg:col-span-5', !isRange);
 
-  $('cal-day-inventory-tbody').innerHTML = snap.inventorySnapshot.length === 0
+  $('cal-day-inventory-tbody').innerHTML = isRange ? '' : snap.inventorySnapshot.length === 0
     ? '<tr><td colspan="6" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
     : snap.inventorySnapshot.map((row) => `
     <tr class="hover:bg-slate-800/40 transition">
@@ -770,25 +824,25 @@ function renderCalendarDayInspector() {
       <td class="py-2 px-2 text-right text-yellow-400 font-bold">Rs. ${Number(row.pricePerKg).toLocaleString()}</td>
     </tr>`).join('');
 
-  const salesHtml = snap.posSales.map((p) => `
+  const salesHtml = sales.map((p) => `
     <div class="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between text-xs">
       <div>
         <div class="flex items-center gap-2">
           <span class="font-black text-yellow-400">${esc(p.id)}</span><span class="font-bold text-white">${esc(p.customer)}</span>
           <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-slate-300">${esc(p.payment)}</span>
         </div>
-        <p class="text-[11px] text-slate-400 mt-0.5">${esc(p.itemsSummary)}</p>
+        <p class="text-[11px] text-slate-400 mt-0.5">${isRange ? `${esc(p.date)} • ` : ''}${esc(p.itemsSummary)}</p>
       </div>
       <div class="text-right shrink-0"><span class="font-black text-emerald-400 block">Rs. ${Number(p.totalRs).toLocaleString()}</span><span class="text-[10px] text-slate-500">${esc(p.time)}</span></div>
     </div>`).join('');
 
-  const batchHtml = snap.slaughterBatches.map((b) => `
+  const batchHtml = batches.map((b) => `
     <div class="p-2.5 rounded-xl bg-slate-950/60 border border-sky-500/30 flex items-center justify-between text-xs">
-      <div><span class="text-[10px] uppercase font-extrabold text-sky-400 block">Farm Slaughter Batch (${esc(b.id)})</span><span class="font-bold text-white">${b.count} × ${esc(b.categoryName)} (Live: ${b.liveKg}kg)</span></div>
+      <div><span class="text-[10px] uppercase font-extrabold text-sky-400 block">Farm Slaughter Batch (${esc(b.id)})${isRange ? ` • ${esc(String(b.date).slice(0, 10))}` : ''}</span><span class="font-bold text-white">${b.count} × ${esc(b.categoryName)} (Live: ${b.liveKg}kg)</span></div>
       <div class="text-right"><span class="font-black text-sky-400">+${b.actualKg} kg Dressed</span><span class="text-[10px] text-slate-400 block">${b.wastePct}% Waste</span></div>
     </div>`).join('');
 
-  $('cal-day-sales-list').innerHTML = (salesHtml + batchHtml) || `<div class="text-center py-6 text-xs text-slate-500">No transactions recorded on ${esc(selectedArchiveDate)}.</div>`;
+  $('cal-day-sales-list').innerHTML = (salesHtml + batchHtml) || `<div class="text-center py-6 text-xs text-slate-500">No transactions recorded for ${esc(dateLabel)}.</div>`;
 }
 
 function renderAnnualAnalytics() {
@@ -940,7 +994,9 @@ function renderAnnualAnalytics() {
     </tr>`).join('');
 
   // printable statement
-  $('ar-date').innerText = `${getTodayDate()} (Selected Calendar Date: ${selectedArchiveDate})`;
+  $('ar-date').innerText = archiveDateRange
+    ? `${getTodayDate()} (Selected Date Range: ${archiveDateRange.from} to ${archiveDateRange.to})`
+    : `${getTodayDate()} (Selected Calendar Date: ${selectedArchiveDate})`;
   $('ar-total-sales').innerText = rows.length ? `Rs. ${sumGross.toLocaleString()}` : '—';
   $('ar-total-collected').innerText = rows.length ? `Rs. ${sumCollected.toLocaleString()}` : '—';
   $('ar-total-receivables').innerText = state.receivablesList.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
@@ -961,12 +1017,20 @@ function renderAnnualAnalytics() {
   const snap = getDaySnapshot(selectedArchiveDate);
   const today = getTodayDate();
   const todaySales = (state.posSales || []).filter((sale) => sale.date === today);
-  const todaySalesTotal = todaySales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
+  const printSales = archiveDateRange
+    ? (state.posSales || []).filter((sale) => sale.date >= archiveDateRange.from && sale.date <= archiveDateRange.to)
+    : todaySales;
+  const printSalesTotal = printSales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
+  const printSalesKg = printSales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0);
+  const printSalesHeading = archiveDateRange
+    ? `POS Sales Details — ${archiveDateRange.from} to ${archiveDateRange.to}`
+    : `Today's POS Sales Details — ${today}`;
   $('ar-day-snapshot-print').classList.remove('hidden');
   $('ar-day-snapshot-body').innerHTML = `
-    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Today's POS Sales Details — ${esc(today)}</h5>
+    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">${esc(printSalesHeading)}</h5>
     <table class="w-full text-left border-collapse border border-slate-300 text-[10px] mb-4">
       <thead><tr class="bg-slate-200 text-slate-800 uppercase">
+        ${archiveDateRange ? '<th class="py-1 px-2 border border-slate-300">Date</th>' : ''}
         <th class="py-1 px-2 border border-slate-300">Time / Receipt</th>
         <th class="py-1 px-2 border border-slate-300">Customer</th>
         <th class="py-1 px-2 border border-slate-300">Items Sold</th>
@@ -974,23 +1038,26 @@ function renderAnnualAnalytics() {
         <th class="py-1 px-2 border border-slate-300 text-right">Weight (kg)</th>
         <th class="py-1 px-2 border border-slate-300 text-right">Total (Rs.)</th>
       </tr></thead>
-      <tbody>${todaySales.length ? todaySales.map((sale) => `
+      <tbody>${printSales.length ? printSales.map((sale) => `
         <tr>
+          ${archiveDateRange ? `<td class="py-1 px-2 border border-slate-300">${esc(sale.date)}</td>` : ''}
           <td class="py-1 px-2 border border-slate-300">${esc(sale.time)}<span class="block font-mono">${esc(sale.id)}</span></td>
           <td class="py-1 px-2 border border-slate-300">${esc(sale.customer)}</td>
           <td class="py-1 px-2 border border-slate-300">${esc(sale.itemsSummary)}</td>
           <td class="py-1 px-2 border border-slate-300">${esc(sale.payment)}</td>
           <td class="py-1 px-2 border border-slate-300 text-right">${Number(sale.totalKg || 0).toFixed(2)}</td>
           <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${Number(sale.totalRs || 0).toLocaleString()}</td>
-        </tr>`).join('') : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No POS sales recorded today.</td></tr>'}
+        </tr>`).join('') : `<tr><td colspan="${archiveDateRange ? 7 : 6}" class="py-2 px-2 border border-slate-300 text-center">No POS sales recorded for this period.</td></tr>`}
       </tbody>
       <tfoot><tr class="bg-slate-100 font-bold">
-        <td colspan="4" class="py-1 px-2 border border-slate-300 text-right">Today's POS Total</td>
-        <td class="py-1 px-2 border border-slate-300 text-right">${todaySales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0).toFixed(2)}</td>
-        <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${todaySalesTotal.toLocaleString()}</td>
+        <td colspan="${archiveDateRange ? 5 : 4}" class="py-1 px-2 border border-slate-300 text-right">${archiveDateRange ? 'Period POS Total' : "Today's POS Total"}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${printSalesKg.toFixed(2)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${printSalesTotal.toLocaleString()}</td>
       </tr></tfoot>
     </table>
-    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Selected Date Inventory & Itemized POS Audit — ${esc(selectedArchiveDate)}</h5>
+    ${archiveDateRange
+      ? `<p class="text-[11px] text-slate-600 mb-4">Inventory snapshots are daily; select a single date to print the inventory time-machine view.</p>`
+      : `<h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Selected Date Inventory & Itemized POS Audit — ${esc(selectedArchiveDate)}</h5>
     <p class="text-[11px] font-bold">Calendar Date Inspected: ${esc(selectedArchiveDate)}</p>
     <table class="w-full text-left border-collapse border border-slate-300 text-[10px]">
       <thead><tr class="bg-slate-200 text-slate-800 uppercase">
@@ -1003,7 +1070,7 @@ function renderAnnualAnalytics() {
         <td class="py-1 px-2 border border-slate-300 text-right">+${Number(r.slaughterInKg).toFixed(2)}</td>
         <td class="py-1 px-2 border border-slate-300 text-right">-${Number(r.soldKg).toFixed(2)}</td>
         <td class="py-1 px-2 border border-slate-300 text-right font-bold">${Number(r.closingKg).toFixed(2)}</td></tr>`).join('')}</tbody>
-    </table>`;
+    </table>`}`;
 
   $('ar-receivables-tbody').innerHTML = state.receivablesList.map((r) => `
     <tr>

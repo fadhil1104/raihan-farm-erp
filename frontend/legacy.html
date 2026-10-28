@@ -538,18 +538,29 @@
             <button onclick="setArchiveGranularity('LIFETIME')" id="gran-LIFETIME" class="px-3 py-2 rounded-xl text-xs font-bold transition bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-800">All-Time Ledger</button>
           </div>
           <div class="lg:col-span-5 flex flex-wrap sm:flex-nowrap items-center justify-end gap-2">
-            <label class="text-xs font-extrabold text-yellow-400 whitespace-nowrap"><i class="fa-regular fa-calendar-check mr-1"></i>Select Date:</label>
+            <label id="archive-date-label" class="text-xs font-extrabold text-yellow-400 whitespace-nowrap"><i class="fa-regular fa-calendar-check mr-1"></i>Select Date:</label>
             <input type="date" id="archive-calendar-picker" onchange="onCalendarDateChange(this.value)" class="px-3 py-2 rounded-xl text-xs font-black">
-            <button onclick="jumpToCalendarDate(getTodayDate())" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-slate-200 border border-slate-700 transition">Today</button>
-            <button onclick="stepCalendarDate(-1)" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-yellow-400 border border-slate-700 transition" title="Previous Day"><i class="fa-solid fa-chevron-left"></i></button>
-            <button onclick="stepCalendarDate(1)" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-yellow-400 border border-slate-700 transition" title="Next Day"><i class="fa-solid fa-chevron-right"></i></button>
+            <button id="archive-today-button" onclick="jumpToCalendarDate(getTodayDate())" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-slate-200 border border-slate-700 transition">Today</button>
+            <button id="archive-previous-day" onclick="stepCalendarDate(-1)" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-yellow-400 border border-slate-700 transition" title="Previous Day"><i class="fa-solid fa-chevron-left"></i></button>
+            <button id="archive-next-day" onclick="stepCalendarDate(1)" class="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-yellow-400 border border-slate-700 transition" title="Next Day"><i class="fa-solid fa-chevron-right"></i></button>
+            <button id="archive-range-toggle" onclick="toggleArchiveDateRange()" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-slate-200 border border-slate-700 transition">Custom Range</button>
+          </div>
+          <div id="archive-date-range-controls" class="hidden lg:col-span-12 flex flex-wrap items-end justify-end gap-2 border-t border-slate-800 pt-3">
+            <label class="text-xs text-slate-400 font-semibold">From
+              <input type="date" id="archive-range-from" class="ml-1 px-3 py-2 rounded-xl text-xs font-bold">
+            </label>
+            <label class="text-xs text-slate-400 font-semibold">To
+              <input type="date" id="archive-range-to" class="ml-1 px-3 py-2 rounded-xl text-xs font-bold">
+            </label>
+            <button onclick="applyArchiveDateRange()" class="px-3 py-2 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-xs font-black text-slate-950 transition">Apply Range</button>
+            <button onclick="toggleArchiveDateRange(false)" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition">Single Date</button>
           </div>
         </div>
 
         <div id="calendar-day-inspector" class="space-y-5">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-950/90 p-4 rounded-xl border border-yellow-400/30">
             <div>
-              <span class="text-[11px] uppercase font-extrabold text-yellow-400 tracking-wider block">Selected Calendar Date Snapshot</span>
+              <span id="cal-date-snapshot-title" class="text-[11px] uppercase font-extrabold text-yellow-400 tracking-wider block">Selected Calendar Date Snapshot</span>
               <h4 class="text-lg font-black text-white" id="cal-selected-date-heading"></h4>
             </div>
             <div class="flex flex-wrap gap-2">
@@ -558,8 +569,8 @@
               <span class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold text-sky-400" id="cal-day-slaughter-badge">No slaughter recorded</span>
             </div>
           </div>
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <div class="lg:col-span-7 bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3">
+          <div id="calendar-day-grid" class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div id="calendar-day-inventory-panel" class="lg:col-span-7 bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3">
               <div class="flex items-center justify-between">
                 <h5 class="font-extrabold text-xs uppercase tracking-wider text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-boxes-stacked"></i> That Day's Dressed Inventory & Stock Movement</h5>
                 <span class="text-[11px] text-slate-400">Opening + Farm Slaughter In - POS Sold = Closing</span>
@@ -575,10 +586,10 @@
                 </table>
               </div>
             </div>
-            <div class="lg:col-span-5 bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3 flex flex-col justify-between">
+            <div id="calendar-day-sales-panel" class="lg:col-span-5 bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3 flex flex-col justify-between">
               <div class="space-y-3">
                 <div class="flex items-center justify-between">
-                  <h5 class="font-extrabold text-xs uppercase tracking-wider text-emerald-400 flex items-center gap-2"><i class="fa-solid fa-receipt"></i> That Day's POS Sales Bills & Slaughter Logs</h5>
+                  <h5 id="cal-day-sales-title" class="font-extrabold text-xs uppercase tracking-wider text-emerald-400 flex items-center gap-2"><i class="fa-solid fa-receipt"></i> That Day's POS Sales Bills & Slaughter Logs</h5>
                   <span class="text-[11px] text-slate-400" id="cal-day-tx-count">No records for this date</span>
                 </div>
                 <div id="cal-day-sales-list" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
