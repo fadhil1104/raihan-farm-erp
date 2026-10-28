@@ -899,8 +899,38 @@ function renderAnnualAnalytics() {
     </tr>`).join('');
 
   const snap = getDaySnapshot(selectedArchiveDate);
+  const today = getTodayDate();
+  const todaySales = (state.posSales || []).filter((sale) => sale.date === today);
+  const todaySalesTotal = todaySales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
   $('ar-day-snapshot-print').classList.remove('hidden');
   $('ar-day-snapshot-body').innerHTML = `
+    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Today's POS Sales Details — ${esc(today)}</h5>
+    <table class="w-full text-left border-collapse border border-slate-300 text-[10px] mb-4">
+      <thead><tr class="bg-slate-200 text-slate-800 uppercase">
+        <th class="py-1 px-2 border border-slate-300">Time / Receipt</th>
+        <th class="py-1 px-2 border border-slate-300">Customer</th>
+        <th class="py-1 px-2 border border-slate-300">Items Sold</th>
+        <th class="py-1 px-2 border border-slate-300">Payment</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Weight (kg)</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Total (Rs.)</th>
+      </tr></thead>
+      <tbody>${todaySales.length ? todaySales.map((sale) => `
+        <tr>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.time)}<span class="block font-mono">${esc(sale.id)}</span></td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.customer)}</td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.itemsSummary)}</td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.payment)}</td>
+          <td class="py-1 px-2 border border-slate-300 text-right">${Number(sale.totalKg || 0).toFixed(2)}</td>
+          <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${Number(sale.totalRs || 0).toLocaleString()}</td>
+        </tr>`).join('') : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No POS sales recorded today.</td></tr>'}
+      </tbody>
+      <tfoot><tr class="bg-slate-100 font-bold">
+        <td colspan="4" class="py-1 px-2 border border-slate-300 text-right">Today's POS Total</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${todaySales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0).toFixed(2)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${todaySalesTotal.toLocaleString()}</td>
+      </tr></tfoot>
+    </table>
+    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Selected Date Inventory & Itemized POS Audit — ${esc(selectedArchiveDate)}</h5>
     <p class="text-[11px] font-bold">Calendar Date Inspected: ${esc(selectedArchiveDate)}</p>
     <table class="w-full text-left border-collapse border border-slate-300 text-[10px]">
       <thead><tr class="bg-slate-200 text-slate-800 uppercase">
