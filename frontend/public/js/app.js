@@ -797,6 +797,66 @@ function renderAnnualAnalytics() {
   if (!filterEl) return;
   const currentVal = filterEl.value || 'ALL';
   const yearOf = (m) => m.year || (String(m.month || '').match(/\d{4}/) || [''])[0];
+  const monthKey = (m) => {
+    const month = String(m.month || '');
+    const year = String(yearOf(m));
+    const isoMonth = month.match(/^(\d{4})-(\d{2})$/);
+    if (isoMonth) return `${isoMonth[1]}-${isoMonth[2]}`;
+    const monthName = month.replace(/\s+\d{4}$/, '');
+    const monthNumber = Number(monthName);
+    const date = monthNumber >= 1 && monthNumber <= 12
+      ? new Date(Number(year), monthNumber - 1, 1)
+      : new Date(`${monthName} 1, ${year}`);
+    return Number.isNaN(date.getTime()) ? '' : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
+  };
+  const monthlyRows = new Map((state.yearlyHistory || []).map((record) => [
+    monthKey(record),
+    {
+      ...record,
+      label: record.month,
+      year: yearOf(record),
+      kgSold: Number(record.kgSold) || 0,
+      posCashSales: Number(record.posCashSales) || 0,
+      subBulkSales: Number(record.subBulkSales) || 0,
+      receivables: Number(record.receivables) || 0,
+      expenses: Number(record.expenses) || 0
+    }
+  ]).filter(([key]) => key));
+  const posByMonth = new Map();
+  const receivablesById = new Map((state.receivablesList || []).map((record) => [String(record.id), record]));
+  (state.posSales || []).forEach((sale) => {
+    const match = String(sale.date || '').match(/^(\d{4})-(\d{2})-\d{2}$/);
+    if (!match) return;
+    const key = `${match[1]}-${match[2]}`;
+    if (!posByMonth.has(key)) posByMonth.set(key, { cashAndCollected: 0, pendingCredit: 0, kgSold: 0 });
+    const monthSales = posByMonth.get(key);
+    const amount = Number(sale.totalRs) || 0;
+    if (String(sale.payment).toUpperCase() === 'CREDIT') {
+      if (receivablesById.get(String(sale.id))?.status !== 'Collected') monthSales.pendingCredit += amount;
+      else monthSales.cashAndCollected += amount;
+    } else {
+      monthSales.cashAndCollected += amount;
+    }
+    monthSales.kgSold += Number(sale.totalKg) || 0;
+  });
+  posByMonth.forEach((totals, key) => {
+    const existing = monthlyRows.get(key);
+    const [year, monthNumber] = key.split('-');
+    const monthName = new Date(Number(year), Number(monthNumber) - 1, 1)
+      .toLocaleDateString('en-US', { month: 'long' });
+    monthlyRows.set(key, {
+      ...(existing || { subBulkSales: 0, expenses: 0 }),
+      month: existing?.month || monthName,
+      year: existing?.year || year,
+      label: existing?.label || `${monthName} ${year}`,
+      posCashSales: totals.cashAndCollected,
+      receivables: totals.pendingCredit,
+      kgSold: totals.kgSold
+    });
+  });
+  const monthlySourceRows = [...monthlyRows.values()]
+    .map((record) => ({ ...record, label: record.label || record.month, year: String(record.year || yearOf(record)) }))
+    .sort((a, b) => monthKey(b).localeCompare(monthKey(a)));
 
   let sourceRows = [], colHeader = 'Period', headingText = 'Permanent Historical Sales & Financial Ledger';
   if (archiveGranularity === 'WEEKLY') {
@@ -805,7 +865,7 @@ function renderAnnualAnalytics() {
   } else if (archiveGranularity === 'YEARLY') {
     colHeader = 'Calendar Year'; headingText = 'Multi-Year Annual Summary (Stored Permanently)';
     const groups = {};
-    state.yearlyHistory.forEach((m) => {
+    monthlySourceRows.forEach((m) => {
       const yr = yearOf(m);
       if (!groups[yr]) groups[yr] = { label: `Year ${yr}`, year: yr, kgSold: 0, posCashSales: 0, subBulkSales: 0, receivables: 0, expenses: 0 };
       ['kgSold', 'posCashSales', 'subBulkSales', 'receivables', 'expenses'].forEach((k) => { groups[yr][k] += Number(m[k] || 0); });
@@ -814,7 +874,7 @@ function renderAnnualAnalytics() {
   } else {
     colHeader = 'Month & Year';
     headingText = archiveGranularity === 'LIFETIME' ? 'Complete All-Time Multi-Year Ledger' : 'Monthly Sales, Dressed Volume & Receivables Ledger';
-    sourceRows = state.yearlyHistory.map((m) => ({ ...m, label: m.month, year: yearOf(m) }));
+    sourceRows = monthlySourceRows;
   }
 
   $('period-col-header').innerText = colHeader;
@@ -859,9 +919,9 @@ function renderAnnualAnalytics() {
   $('yr-kpi-rec-count').innerText = state.receivablesList.length ? `${pending.length} pending hotel/customer accounts` : 'No receivables recorded';
   $('yr-kpi-kg').innerText = rows.length ? `${sumKg.toLocaleString()} kg` : '—';
   const snapshotCount = Object.keys(state.dailyVault || {}).length;
-  const periodCount = state.yearlyHistory.length + state.weeklyHistory.length;
+  const periodCount = monthlySourceRows.length + state.weeklyHistory.length;
   $('vault-record-counter').innerText = periodCount || snapshotCount
-    ? `${state.yearlyHistory.length} Months • ${state.weeklyHistory.length} Weeks • ${snapshotCount} Daily Snapshots`
+    ? `${monthlySourceRows.length} Months • ${state.weeklyHistory.length} Weeks • ${snapshotCount} Daily Snapshots`
     : 'No archived records yet';
 
   $('receivables-tbody').innerHTML = state.receivablesList.length === 0
@@ -1110,13 +1170,6 @@ function completePosSale() {
   state.posSales.unshift({
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
     itemsSummary, itemsBreakdown, itemsDetails, totalKg: +totalKg.toFixed(2), payment, totalRs: grandTotal
-  });
-
-  [state.yearlyHistory[state.yearlyHistory.length - 1], state.weeklyHistory[state.weeklyHistory.length - 1]].forEach((p) => {
-    if (!p) return;
-    p.kgSold = +(Number(p.kgSold || 0) + totalKg).toFixed(2);
-    if (payment === 'CREDIT') p.receivables = Number(p.receivables || 0) + grandTotal;
-    else p.posCashSales = Number(p.posCashSales || 0) + grandTotal;
   });
 
   if (payment === 'CREDIT') {
