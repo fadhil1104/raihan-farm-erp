@@ -655,14 +655,14 @@
       <div class="border-b border-slate-800 pb-4">
         <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Raihan Own Farm Supplier</span>
         <h2 class="text-2xl font-black mt-1">Farm Live Intake & Slaughter Wastage Calculator</h2>
-        <p class="text-slate-400 text-sm">Enter live animals received from Raihan Farm and record actual dressed weight after slaughtering. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
+        <p class="text-slate-400 text-sm">Record the live intake, then enter how many animals were slaughtered and their combined live weight. Record the actual dressed weight added to shop stock. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
       </div>
       <div class="card-highlight p-5 sm:p-6 space-y-5">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i> Record New Farm Intake & Slaughter Batch (Auto-Adds to Shop Inventory)</h3>
-          <span class="text-xs bg-slate-900 border border-yellow-500/30 px-3 py-1 rounded-lg text-slate-300">Formula: <strong>Expected Dressed = Live Weight × 70%</strong> (30% Waste)</span>
+          <span class="text-xs bg-slate-900 border border-yellow-500/30 px-3 py-1 rounded-lg text-slate-300">Formula: <strong>Expected Dressed = Slaughtered Live Weight × 70%</strong> (30% Waste)</span>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label class="block text-xs text-slate-400 font-semibold mb-1.5">Inventory Item to Stock</label>
             <select id="sl-category" class="w-full px-3 py-2.5 rounded-xl text-sm font-semibold">
@@ -678,12 +678,20 @@
             <input type="number" step="0.1" id="sl-live-kg" placeholder="Enter live weight" oninput="onLiveWeightInput()" class="w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
           </div>
           <div>
+            <label class="block text-xs text-slate-400 font-semibold mb-1.5">Number of Animals Slaughtered (Count)</label>
+            <input type="number" id="sl-slaughter-count" min="1" step="1" placeholder="Enter slaughtered count" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+          </div>
+          <div>
+            <label class="block text-xs text-yellow-400 font-bold mb-1.5">Total Live Weight of Slaughtered Animals (kg)</label>
+            <input type="number" min="0.01" step="0.1" id="sl-slaughter-live-kg" placeholder="Enter slaughtered live weight" oninput="onSlaughterWeightInput()" class="w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+          </div>
+          <div>
             <label class="block text-xs text-emerald-400 font-bold mb-1.5">Actual Weight After Slaughter (kg)</label>
             <input type="number" step="0.1" id="sl-actual-kg" placeholder="Enter dressed weight" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 bg-slate-950/90 p-4 rounded-xl border border-slate-800">
-          <div class="p-2"><span class="text-[11px] uppercase text-slate-400 block">Avg Live Weight / Bird</span><strong class="text-base text-white font-bold" id="prev-avg-live">—</strong></div>
+          <div class="p-2"><span class="text-[11px] uppercase text-slate-400 block">Avg Live Weight / Slaughtered Animal</span><strong class="text-base text-white font-bold" id="prev-avg-live">—</strong></div>
           <div class="p-2 border-t sm:border-t-0 sm:border-l border-slate-800 sm:pl-4"><span class="text-[11px] uppercase text-slate-400 block">Expected 70% Dressed Yield</span><strong class="text-base text-yellow-400 font-extrabold" id="prev-expected-kg">—</strong><span class="text-[10px] text-slate-500 block" id="prev-std-waste">—</span></div>
           <div class="p-2 border-t lg:border-t-0 lg:border-l border-slate-800 lg:pl-4"><span class="text-[11px] uppercase text-slate-400 block">Actual Wastage (kg & %)</span><strong class="text-base text-red-400 font-extrabold" id="prev-actual-waste">—</strong></div>
           <div class="p-2 border-t sm:border-t-0 sm:border-l border-slate-800 sm:pl-4"><span class="text-[11px] uppercase text-slate-400 block">Net Stock Added to Shop</span><strong class="text-lg text-emerald-400 font-black" id="prev-net-stock">—</strong></div>
@@ -700,7 +708,7 @@
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-              <th class="py-3 px-3">Date & Batch</th><th class="py-3 px-3">Farm Source & Animal</th><th class="py-3 px-3">Live Count</th><th class="py-3 px-3">Live Weight</th><th class="py-3 px-3">Expected (70%)</th><th class="py-3 px-3">Actual Dressed Wt</th><th class="py-3 px-3">Actual Wastage</th><th class="py-3 px-3">Yield Status</th><th class="py-3 px-3 admin-only-nav">Admin</th>
+              <th class="py-3 px-3">Date & Batch</th><th class="py-3 px-3">Farm Source & Animal</th><th class="py-3 px-3">Live Intake Count</th><th class="py-3 px-3">Live Intake Weight</th><th class="py-3 px-3">Slaughtered Count</th><th class="py-3 px-3">Slaughtered Live Weight</th><th class="py-3 px-3">Expected (70%)</th><th class="py-3 px-3">Actual Dressed Wt</th><th class="py-3 px-3">Actual Wastage</th><th class="py-3 px-3">Yield Status</th><th class="py-3 px-3 admin-only-nav">Admin</th>
             </tr>
           </thead>
           <tbody id="slaughter-tbody" class="divide-y divide-slate-800"></tbody>
@@ -1153,6 +1161,8 @@
         <div><label class="block text-xs text-slate-400 mb-1">Dressed Inventory Item</label><select id="edit-batch-category" class="w-full px-3 py-2 rounded-lg text-sm"></select></div>
         <div><label class="block text-xs text-slate-400 mb-1">Animal Count (whole number)</label><input type="number" min="1" step="1" id="edit-batch-count" class="w-full px-3 py-2 rounded-lg text-sm"></div>
         <div><label class="block text-xs text-slate-400 mb-1">Live Weight (kg)</label><input type="number" min="0.01" step="0.01" id="edit-batch-live" class="w-full px-3 py-2 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-slate-400 mb-1">Slaughtered Animal Count</label><input type="number" min="1" step="1" id="edit-batch-slaughter-count" class="w-full px-3 py-2 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-slate-400 mb-1">Slaughtered Animals' Live Weight (kg)</label><input type="number" min="0.01" step="0.01" id="edit-batch-slaughter-live" class="w-full px-3 py-2 rounded-lg text-sm"></div>
         <div><label class="block text-xs text-slate-400 mb-1">Actual Dressed Weight (kg)</label><input type="number" min="0.01" step="0.01" id="edit-batch-actual" class="w-full px-3 py-2 rounded-lg text-sm"></div>
       </div>
       <div class="flex gap-2 pt-1">

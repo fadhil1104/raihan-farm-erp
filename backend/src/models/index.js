@@ -30,7 +30,8 @@ const Customer = model('Customer', new Schema({
 
 const SlaughterBatch = model('SlaughterBatch', new Schema({
   ...base, id: String, date: String, source: String, categoryId: String, categoryName: String,
-  count: Number, liveKg: Number, expectedKg: Number, actualKg: Number, wasteKg: Number, wastePct: Number
+  count: Number, liveKg: Number, slaughterCount: Number, slaughterLiveKg: Number,
+  expectedKg: Number, actualKg: Number, wasteKg: Number, wastePct: Number
 }, opts));
 
 const PosSale = model('PosSale', new Schema({

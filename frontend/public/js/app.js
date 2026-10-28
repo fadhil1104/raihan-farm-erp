@@ -424,41 +424,59 @@ function switchTab(tabId) {
 // ---------- MODULE 2: farm slaughter (30% waste) ----------
 function onLiveWeightInput() {
   const liveKg = Number($('sl-live-kg').value) || 0;
-  $('sl-actual-kg').value = +(liveKg * 0.70).toFixed(2);
+  const slaughterLiveKg = Number($('sl-slaughter-live-kg').value) || 0;
+  $('sl-slaughter-live-kg').max = String(liveKg);
+  if (!slaughterLiveKg || slaughterLiveKg > liveKg) $('sl-slaughter-live-kg').value = liveKg || '';
+  onSlaughterWeightInput();
+}
+
+function onSlaughterWeightInput() {
+  const slaughterLiveKg = Number($('sl-slaughter-live-kg').value) || 0;
+  $('sl-actual-kg').value = slaughterLiveKg ? +(slaughterLiveKg * 0.70).toFixed(2) : '';
   calculateSlaughterPreview();
 }
 
 function calculateSlaughterPreview() {
-  const count = Math.max(1, Number($('sl-count').value) || 1);
-  const liveKg = Math.max(0, Number($('sl-live-kg').value) || 0);
+  const count = Number($('sl-slaughter-count').value) || 0;
+  const intakeLiveKg = Math.max(0, Number($('sl-live-kg').value) || 0);
+  const liveKg = Math.max(0, Number($('sl-slaughter-live-kg').value) || 0);
   const actualKg = Math.max(0, Number($('sl-actual-kg').value) || 0);
   const actualWasteKg = Math.max(0, liveKg - actualKg);
   const actualWastePct = liveKg > 0 ? (actualWasteKg / liveKg) * 100 : 0;
-  $('prev-avg-live').innerText = liveKg > 0 ? `${(liveKg / count).toFixed(2)} kg` : '—';
+  $('prev-avg-live').innerText = liveKg > 0 && count > 0 ? `${(liveKg / count).toFixed(2)} kg` : '—';
   $('prev-expected-kg').innerText = `${(liveKg * 0.70).toFixed(2)} kg`;
   $('prev-std-waste').innerText = `(Std 30% Waste: ${(liveKg * 0.30).toFixed(2)} kg)`;
   $('prev-actual-waste').innerText = `${actualWasteKg.toFixed(2)} kg (${actualWastePct.toFixed(1)}%)`;
   $('prev-net-stock').innerText = `+${actualKg.toFixed(2)} kg`;
+  $('sl-slaughter-count').max = String(Number($('sl-count').value) || 0);
+  $('sl-slaughter-live-kg').max = String(intakeLiveKg);
 }
 
 function recordSlaughterBatch() {
   const categoryId = $('sl-category').value;
   const count = Number($('sl-count').value) || 0;
   const liveKg = Number($('sl-live-kg').value) || 0;
+  const slaughterCount = Number($('sl-slaughter-count').value) || 0;
+  const slaughterLiveKg = Number($('sl-slaughter-live-kg').value) || 0;
   const actualKg = Number($('sl-actual-kg').value) || 0;
-  if (!Number.isInteger(count) || count <= 0 || liveKg <= 0 || actualKg <= 0 || actualKg > liveKg) return showToast('Please enter a whole animal count and valid weights; dressed weight cannot exceed live weight.', 'error');
+  if (!Number.isInteger(count) || count <= 0 || !Number.isInteger(slaughterCount) || slaughterCount <= 0 ||
+      slaughterCount > count || liveKg <= 0 || slaughterLiveKg <= 0 || slaughterLiveKg > liveKg ||
+      actualKg <= 0 || actualKg > slaughterLiveKg) {
+    return showToast('Enter valid intake and slaughter counts/weights. Slaughtered animals and dressed weight cannot exceed the live intake.', 'error');
+  }
 
   const invItem = state.inventory.find((i) => i.id === categoryId);
   if (!invItem || inventoryUnit(invItem) !== 'kg') return showToast('Select a kg-based meat inventory item before recording a slaughter batch.', 'error');
-  const wasteKg = +(liveKg - actualKg).toFixed(2);
+  const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
   const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   state.slaughterBatches.unshift({
     id: 'BATCH-' + Date.now().toString().slice(-7),
     date: `${getTodayDate()} ${nowTime}`,
     source: invItem.source, categoryId, categoryName: invItem.name,
-    count, liveKg, expectedKg: +(liveKg * 0.70).toFixed(2), actualKg, wasteKg,
-    wastePct: +((wasteKg / liveKg) * 100).toFixed(1)
+    count, liveKg, slaughterCount, slaughterLiveKg,
+    expectedKg: +(slaughterLiveKg * 0.70).toFixed(2), actualKg, wasteKg,
+    wastePct: +((wasteKg / slaughterLiveKg) * 100).toFixed(1)
   });
   invItem.stockKg = +(invItem.stockKg + actualKg).toFixed(2);
 
@@ -484,6 +502,8 @@ function openSlaughterEdit(id) {
   $('edit-batch-category').value = batch.categoryId;
   $('edit-batch-count').value = batch.count;
   $('edit-batch-live').value = batch.liveKg;
+  $('edit-batch-slaughter-count').value = batch.slaughterCount ?? batch.count;
+  $('edit-batch-slaughter-live').value = batch.slaughterLiveKg ?? batch.liveKg;
   $('edit-batch-actual').value = batch.actualKg;
   $('slaughter-edit-modal').classList.remove('hidden');
 }
@@ -526,11 +546,16 @@ function saveSlaughterEdit() {
   if (!batch) return showToast('Slaughter batch not found.', 'error');
   const category = state.inventory.find((item) => item.id === $('edit-batch-category').value);
   const count = Number($('edit-batch-count').value), liveKg = Number($('edit-batch-live').value);
+  const slaughterCount = Number($('edit-batch-slaughter-count').value);
+  const slaughterLiveKg = Number($('edit-batch-slaughter-live').value);
   const actualKg = Number($('edit-batch-actual').value), dateValue = $('edit-batch-date').value;
   const source = $('edit-batch-source').value.trim();
   if (!category || inventoryUnit(category) !== 'kg' || !source || !dateValue || !Number.isInteger(count) ||
-      count <= 0 || !Number.isFinite(liveKg) || liveKg <= 0 || !Number.isFinite(actualKg) || actualKg <= 0 || actualKg > liveKg) {
-    return showToast('Enter a source, date, whole animal count, and valid weights; dressed weight cannot exceed live weight.', 'error');
+      count <= 0 || !Number.isInteger(slaughterCount) || slaughterCount <= 0 || slaughterCount > count ||
+      !Number.isFinite(liveKg) || liveKg <= 0 || !Number.isFinite(slaughterLiveKg) ||
+      slaughterLiveKg <= 0 || slaughterLiveKg > liveKg || !Number.isFinite(actualKg) ||
+      actualKg <= 0 || actualKg > slaughterLiveKg) {
+    return showToast('Enter valid intake and slaughter counts/weights. Slaughtered animals and dressed weight cannot exceed the live intake.', 'error');
   }
   const oldBatch = { ...batch };
   const oldItem = state.inventory.find((item) => item.id === oldBatch.categoryId);
@@ -545,12 +570,13 @@ function saveSlaughterEdit() {
   }
 
   const date = new Date(dateValue);
-  const wasteKg = +(liveKg - actualKg).toFixed(2);
+  const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
   Object.assign(batch, {
     date: `${fmtDate(date)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`,
     source, categoryId: category.id, categoryName: category.name,
-    count, liveKg, expectedKg: +(liveKg * 0.70).toFixed(2), actualKg, wasteKg,
-    wastePct: +((wasteKg / liveKg) * 100).toFixed(1)
+    count, liveKg, slaughterCount, slaughterLiveKg,
+    expectedKg: +(slaughterLiveKg * 0.70).toFixed(2), actualKg, wasteKg,
+    wastePct: +((wasteKg / slaughterLiveKg) * 100).toFixed(1)
   });
   updateBatchVault(oldBatch, batch);
   closeSlaughterEdit();
@@ -838,7 +864,7 @@ function renderCalendarDayInspector() {
 
   const batchHtml = batches.map((b) => `
     <div class="p-2.5 rounded-xl bg-slate-950/60 border border-sky-500/30 flex items-center justify-between text-xs">
-      <div><span class="text-[10px] uppercase font-extrabold text-sky-400 block">Farm Slaughter Batch (${esc(b.id)})${isRange ? ` • ${esc(String(b.date).slice(0, 10))}` : ''}</span><span class="font-bold text-white">${b.count} × ${esc(b.categoryName)} (Live: ${b.liveKg}kg)</span></div>
+      <div><span class="text-[10px] uppercase font-extrabold text-sky-400 block">Farm Slaughter Batch (${esc(b.id)})${isRange ? ` • ${esc(String(b.date).slice(0, 10))}` : ''}</span><span class="font-bold text-white">${Number(b.slaughterCount ?? b.count)} × ${esc(b.categoryName)} (Slaughtered live: ${Number(b.slaughterLiveKg ?? b.liveKg)}kg)</span></div>
       <div class="text-right"><span class="font-black text-sky-400">+${b.actualKg} kg Dressed</span><span class="text-[10px] text-slate-400 block">${b.wastePct}% Waste</span></div>
     </div>`).join('');
 
@@ -1822,7 +1848,7 @@ function renderAll() {
     ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No slaughter batches recorded yet.</div>'
     : state.slaughterBatches.slice(0, 3).map((b) => `
     <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-xs flex justify-between items-center">
-      <div><p class="font-bold text-white">${b.count} × ${esc(b.categoryName)}</p><p class="text-slate-400">Live: ${b.liveKg}kg &rarr; <strong class="text-emerald-400">Dressed: ${b.actualKg}kg</strong></p></div>
+      <div><p class="font-bold text-white">${Number(b.slaughterCount ?? b.count)} slaughtered × ${esc(b.categoryName)} (${b.count} received)</p><p class="text-slate-400">Slaughtered live: ${Number(b.slaughterLiveKg ?? b.liveKg)}kg &rarr; <strong class="text-emerald-400">Dressed: ${b.actualKg}kg</strong></p></div>
       <span class="px-2 py-1 rounded-lg font-bold ${b.wastePct <= 31 ? 'bg-yellow-400/15 text-yellow-400' : 'bg-red-500/20 text-red-400'}">${b.wastePct}% Waste</span>
     </div>`).join('');
 
@@ -1844,7 +1870,7 @@ function renderAll() {
 
   // Slaughter table
   $('slaughter-tbody').innerHTML = state.slaughterBatches.length === 0
-    ? '<tr><td colspan="9" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>'
+    ? '<tr><td colspan="11" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>'
     : state.slaughterBatches.map((b) => {
     const optimal = b.wastePct <= 31;
     return `
@@ -1853,6 +1879,8 @@ function renderAll() {
         <td class="py-3 px-3"><div class="font-bold text-white">${esc(b.categoryName)}</div><div class="text-xs text-slate-400">${esc(b.source)}</div></td>
         <td class="py-3 px-3 font-bold">${b.count} Head</td>
         <td class="py-3 px-3 font-semibold">${Number(b.liveKg).toFixed(1)} kg</td>
+        <td class="py-3 px-3 font-bold">${Number(b.slaughterCount ?? b.count)} Head</td>
+        <td class="py-3 px-3 font-semibold">${Number(b.slaughterLiveKg ?? b.liveKg).toFixed(1)} kg</td>
         <td class="py-3 px-3 text-slate-400">${Number(b.expectedKg).toFixed(1)} kg</td>
         <td class="py-3 px-3 font-black text-emerald-400">+${Number(b.actualKg).toFixed(1)} kg</td>
         <td class="py-3 px-3"><span class="font-bold text-red-400">${Number(b.wasteKg).toFixed(1)} kg</span><span class="text-xs text-slate-400 block">(${Number(b.wastePct).toFixed(1)}% waste)</span></td>
