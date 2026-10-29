@@ -51,6 +51,7 @@ let currentUser = null;                 // { username, role, label }
 let selectedPosCategoryId = null;
 let posCart = [];
 let posIncomePeriod = 'DAY';
+let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
@@ -72,6 +73,7 @@ function setPosIncomePeriod(period) {
 }
 
 function updatePosIncomeDateFilter() {
+  posIncomeDate = $('pos-income-date').value || posIncomeDate;
   posIncomeMonth = $('pos-income-month').value || posIncomeMonth;
   posIncomeYear = $('pos-income-year').value || posIncomeYear;
   renderPosSalesHistory();
@@ -97,13 +99,17 @@ function getPosSaleTimestamp(sale) {
 function renderPosSalesHistory() {
   if (!state) return;
   const periodSelect = $('pos-income-period');
+  const dateInput = $('pos-income-date');
   const monthInput = $('pos-income-month');
   const yearInput = $('pos-income-year');
+  const dateFilter = $('pos-income-date-filter');
   const monthFilter = $('pos-income-month-filter');
   const yearFilter = $('pos-income-year-filter');
   if (periodSelect) periodSelect.value = posIncomePeriod;
+  if (dateInput && dateInput.value !== posIncomeDate) dateInput.value = posIncomeDate;
   if (monthInput && monthInput.value !== posIncomeMonth) monthInput.value = posIncomeMonth;
   if (yearInput && yearInput.value !== posIncomeYear) yearInput.value = posIncomeYear;
+  dateFilter?.classList.toggle('hidden', posIncomePeriod !== 'DATE');
   monthFilter?.classList.toggle('hidden', posIncomePeriod !== 'MONTH');
   yearFilter?.classList.toggle('hidden', posIncomePeriod !== 'YEAR');
 
@@ -112,6 +118,7 @@ function renderPosSalesHistory() {
   const sales = (state.posSales || []).filter((sale) => {
     const date = String(sale.date || '');
     if (posIncomePeriod === 'DAY') return date === getTodayDate();
+    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
     if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
     if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
     const timestamp = getPosSaleTimestamp(sale);
@@ -130,6 +137,7 @@ function renderPosSalesHistory() {
   $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
 
   const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
+    : posIncomePeriod === 'DATE' ? `Sales for ${posIncomeDate}`
     : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
     : posIncomePeriod === 'MONTH' ? `Month of ${posIncomeMonth}`
     : `Year ${posIncomeYear}`;

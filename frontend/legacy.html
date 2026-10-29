@@ -827,10 +827,14 @@
             <label for="pos-income-period" class="text-xs text-slate-400 font-semibold">Period</label>
             <select id="pos-income-period" onchange="setPosIncomePeriod(this.value)" class="px-3 py-2 rounded-lg text-sm">
               <option value="DAY">Current Day</option>
+              <option value="DATE">Specific Date</option>
               <option value="WEEK">Weekly (Past 7 Days)</option>
               <option value="MONTH">Monthly</option>
               <option value="YEAR">Yearly</option>
             </select>
+            <label id="pos-income-date-filter" class="hidden text-xs text-slate-400 font-semibold">Select date
+              <input type="date" id="pos-income-date" onchange="updatePosIncomeDateFilter()" class="ml-1 px-3 py-2 rounded-lg text-sm">
+            </label>
             <label id="pos-income-month-filter" class="hidden text-xs text-slate-400 font-semibold">Select month
               <input type="month" id="pos-income-month" onchange="updatePosIncomeDateFilter()" class="ml-1 px-3 py-2 rounded-lg text-sm">
             </label>
