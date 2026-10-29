@@ -39,6 +39,13 @@ const PosSale = model('PosSale', new Schema({
   itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number
 }, opts));
 
+const CashierEntry = model('CashierEntry', new Schema({
+  ...base, id: String, date: String, time: String,
+  type: { type: String, enum: ['OPENING', 'WITHDRAWAL'], required: true },
+  amount: { type: Number, required: true, min: 0 },
+  takenBy: String, recordedBy: String, note: String
+}, opts));
+
 const Employee = model('Employee', new Schema({
   ...base, id: Number, name: String, phone: String, role: String, pin: String, baseSalary: Number, otRate: Number,
   allowance: Number, advance: Number, clockedIn: Boolean, lastClockIn: String, archivedAt: Date
@@ -90,6 +97,7 @@ const collections = [
   { key: 'customers',                 Model: Customer,          keyField: 'id' },
   { key: 'slaughterBatches',          Model: SlaughterBatch,    keyField: 'id',    adminOnly: true, sortNewest: true },
   { key: 'posSales',                  Model: PosSale,           keyField: 'id',    insertOnly: true, sortNewest: true },
+  { key: 'cashierEntries',            Model: CashierEntry,      keyField: 'id',    insertOnly: true, sortNewest: true },
   { key: 'receivablesList',           Model: Receivable,        keyField: 'id' },
   { key: 'yearlyHistory',             Model: MonthlyHistory,    keyField: 'month' },
   { key: 'weeklyHistory',             Model: WeeklyHistory,     keyField: 'week' },
@@ -109,4 +117,4 @@ const collections = [
  * A normal sync only inserts/updates; records are deleted only by an admin restore (PUT /api/state?replace=true).
  */
 
-module.exports = { collections, DailyVault, InventoryItem, Employee, AttendanceLog, PosSale, Customer };
+module.exports = { collections, DailyVault, InventoryItem, Employee, AttendanceLog, PosSale, CashierEntry, Customer };

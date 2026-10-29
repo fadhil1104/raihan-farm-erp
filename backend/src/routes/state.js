@@ -1,6 +1,7 @@
 const router = require('express').Router();
-const { collections, DailyVault, InventoryItem } = require('../models');
+const { collections, DailyVault, InventoryItem, CashierEntry, PosSale } = require('../models');
 const { requireAuth } = require('../middleware/auth');
+const { randomUUID } = require('node:crypto');
 
 const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
 const clean = (doc) => { META.forEach((k) => delete doc[k]); return doc; };
@@ -88,6 +89,7 @@ router.put('/', requireAuth, async (req, res) => {
   const newlyCreatedSales = [];
   for (const c of collections) {
     if (c.adminOnly && !isAdmin) continue;
+    if (c.key === 'cashierEntries' && !replace) continue;
     if (!Array.isArray(body[c.key])) continue;
     if (c.key === 'inventory' && !isAdmin) continue;
     const items = body[c.key].filter((x) => x && x[c.keyField] !== undefined && x[c.keyField] !== null);
@@ -107,6 +109,73 @@ router.put('/', requireAuth, async (req, res) => {
     if (ops.length) await DailyVault.bulkWrite(ops);
   }
   res.json({ ok: true, savedAt: new Date().toISOString() });
+});
+
+router.post('/cashier-entries', requireAuth, async (req, res) => {
+  const { type } = req.body || {};
+  const date = String(req.body?.date || '');
+  const amount = Number(req.body?.amount);
+  const takenBy = String(req.body?.takenBy || '').trim();
+  const note = String(req.body?.note || '').trim();
+  if (!['OPENING', 'WITHDRAWAL'].includes(type)) {
+    return res.status(400).json({ error: 'Choose a valid cashier entry type.' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'A valid cashier date is required.' });
+  }
+  const parsedDate = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+    return res.status(400).json({ error: 'A valid cashier date is required.' });
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Enter an amount greater than zero.' });
+  }
+  if (type === 'WITHDRAWAL' && !takenBy) {
+    return res.status(400).json({ error: 'Enter the name of the person taking the cash.' });
+  }
+
+  const dayEntries = await CashierEntry.find({ date }).lean();
+  const opening = dayEntries.find((entry) => entry.type === 'OPENING');
+  if (type === 'OPENING' && opening) {
+    return res.status(409).json({ error: 'Today’s opening cash has already been recorded.' });
+  }
+  if (type === 'WITHDRAWAL') {
+    if (!opening) return res.status(409).json({ error: 'Record the day’s opening cash before recording a withdrawal.' });
+    const [cashSales] = await PosSale.aggregate([
+      { $match: { date, payment: 'CASH' } },
+      { $group: { _id: null, total: { $sum: '$totalRs' } } }
+    ]);
+    const available = Number(opening.amount || 0)
+      + Number(cashSales?.total || 0)
+      - dayEntries.filter((entry) => entry.type === 'WITHDRAWAL')
+        .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    if (amount > available) {
+      return res.status(409).json({ error: `Withdrawal exceeds the available drawer balance of Rs. ${available.toLocaleString()}.` });
+    }
+  }
+
+  const id = type === 'OPENING' ? `opening-${date}` : `withdrawal-${randomUUID()}`;
+  const entry = {
+    id,
+    uid: id,
+    seq: Date.now(),
+    date,
+    time: String(req.body?.time || ''),
+    type,
+    amount: Math.round(amount * 100) / 100,
+    takenBy: type === 'WITHDRAWAL' ? takenBy : '',
+    recordedBy: String(req.user.label || req.user.username),
+    note
+  };
+  try {
+    const saved = await CashierEntry.create(entry);
+    res.status(201).json({ entry: clean(saved.toObject()) });
+  } catch (err) {
+    if (err.code === 11000 && type === 'OPENING') {
+      return res.status(409).json({ error: 'Today’s opening cash has already been recorded.' });
+    }
+    throw err;
+  }
 });
 
 router.post('/inventory/:id/stock', requireAuth, async (req, res) => {

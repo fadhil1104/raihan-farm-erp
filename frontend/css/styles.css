@@ -28,8 +28,63 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     border-color: #bbb !important;
     box-shadow: none !important;
   }
-  .printable-active#pos-income-summary { background: white !important; }
-  .printable-active#pos-income-summary table { width: 100%; border-collapse: collapse; }
-  .printable-active#pos-income-summary th,
-  .printable-active#pos-income-summary td { border-bottom: 1px solid #bbb; }
+  .printable-active#pos-income-summary {
+    box-sizing: border-box;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-width: 100%;
+    padding: 3mm !important;
+    overflow: visible;
+    background: white !important;
+    font: 9pt/1.3 Arial, sans-serif;
+  }
+  .printable-active#pos-income-summary .grid { display: block; }
+  .printable-active#pos-income-summary .grid > div { margin: 0 0 3mm; padding: 2mm !important; }
+  .printable-active#pos-income-summary table { display: block; width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .printable-active#pos-income-summary thead { display: none; }
+  .printable-active#pos-income-summary tbody { display: block; width: 100%; }
+  .printable-active#pos-income-summary tr {
+    display: block;
+    width: 100%;
+    padding: 1mm 0 2mm;
+    margin-bottom: 2mm;
+    border-bottom: 1px dashed #888;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  .printable-active#pos-income-summary td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6mm 0 !important;
+    border: 0 !important;
+    vertical-align: top;
+    text-align: left !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .printable-active#pos-income-summary td[data-label]::before {
+    content: attr(data-label) ": ";
+    display: inline;
+    font-weight: 700;
+  }
+  .printable-active#pos-income-summary td[data-label="Items sold"]::before { display: block; }
+  .printable-active#pos-income-summary #pos-history-heading { font-size: 10pt; margin: 3mm 0 2mm; }
+  .printable-active#pos-income-summary .overflow-x-auto { overflow: visible !important; }
+  .printable-active#pos-summary-print-area {
+    display: block !important;
+    font: 10px/1.35 Arial, sans-serif;
+  }
+  .printable-active#pos-summary-print-area h1 { font-size: 19px; margin: 0 0 5px; }
+  .printable-active#pos-summary-print-area h2 { font-size: 13px; margin: 18px 0 6px; page-break-after: avoid; }
+  .printable-active#pos-summary-print-area .pos-print-header { border-bottom: 2px solid #222; padding-bottom: 8px; }
+  .printable-active#pos-summary-print-area p { margin: 3px 0; }
+  .printable-active#pos-summary-print-area table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .printable-active#pos-summary-print-area th,
+  .printable-active#pos-summary-print-area td { border: 1px solid #aaa; padding: 4px; vertical-align: top; overflow-wrap: anywhere; }
+  .printable-active#pos-summary-print-area th { text-align: left; }
+  .printable-active#pos-summary-print-area .text-right { text-align: right; }
+  .printable-active#pos-summary-print-area .text-center { text-align: center; }
+  .printable-active#pos-summary-print-area tr { page-break-inside: avoid; }
 }
+.pos-summary-print-area { display: none; }

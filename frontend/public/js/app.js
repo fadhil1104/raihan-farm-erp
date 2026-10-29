@@ -97,6 +97,21 @@ function getPosSaleTimestamp(sale) {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
+function getPosIncomeSales() {
+  if (!state) return [];
+  const now = Date.now();
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  return (state.posSales || []).filter((sale) => {
+    const date = String(sale.date || '');
+    if (posIncomePeriod === 'DAY') return date === getTodayDate();
+    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
+    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
+    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
+    const timestamp = getPosSaleTimestamp(sale);
+    return timestamp !== null && timestamp <= now && timestamp >= now - windowMs;
+  });
+}
+
 function renderPosSalesHistory() {
   if (!state) return;
   const periodSelect = $('pos-income-period');
@@ -114,17 +129,7 @@ function renderPosSalesHistory() {
   monthFilter?.classList.toggle('hidden', posIncomePeriod !== 'MONTH');
   yearFilter?.classList.toggle('hidden', posIncomePeriod !== 'YEAR');
 
-  const now = Date.now();
-  const windowMs = 7 * 24 * 60 * 60 * 1000;
-  const sales = (state.posSales || []).filter((sale) => {
-    const date = String(sale.date || '');
-    if (posIncomePeriod === 'DAY') return date === getTodayDate();
-    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
-    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
-    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
-    const timestamp = getPosSaleTimestamp(sale);
-    return timestamp !== null && timestamp <= now && timestamp >= now - windowMs;
-  });
+  const sales = getPosIncomeSales();
 
   let cashIncome = 0;
   let cardIncome = 0;
@@ -148,13 +153,165 @@ function renderPosSalesHistory() {
     ? `<tr><td colspan="6" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
     : sales.map((p) => `
     <tr class="hover:bg-slate-800/40 transition">
-      <td class="py-3 px-3"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
-      <td class="py-3 px-3 font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}</td>
-      <td class="py-3 px-3 text-slate-300 text-xs">${esc(p.itemsSummary)}</td>
-      <td class="py-3 px-3 font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
-      <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
-      <td class="py-3 px-3 text-right font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
+      <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
+      <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}</td>
+      <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
+      <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
+      <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
+      <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
     </tr>`).join('');
+  renderCashierDrawer();
+}
+
+function posSaleItemsHtml(sale) {
+  if (!Array.isArray(sale.itemsDetails) || sale.itemsDetails.length === 0) return esc(sale.itemsSummary || 'Item details unavailable');
+  return sale.itemsDetails.map((item) =>
+    `<div>${esc(item.name)} — ${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || 'unit')} · Rs. ${Number(item.lineTotal || 0).toLocaleString()}</div>`
+  ).join('');
+}
+
+function renderCashierDrawer() {
+  if (!state) return;
+  if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  const today = getTodayDate();
+  const entries = state.cashierEntries.filter((entry) => entry.date === today);
+  const opening = entries.find((entry) => entry.type === 'OPENING');
+  const withdrawals = entries.filter((entry) => entry.type === 'WITHDRAWAL');
+  const cashSales = (state.posSales || []).filter((sale) => sale.date === today && sale.payment === 'CASH')
+    .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
+  const withdrawn = withdrawals.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const balance = Number(opening?.amount || 0) + cashSales - withdrawn;
+
+  $('cashier-date-label').innerText = today;
+  $('cashier-opening-balance').innerText = opening ? `Rs. ${Number(opening.amount).toLocaleString()}` : 'Not entered';
+  $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
+  $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
+  $('cashier-current-balance').innerText = `Rs. ${balance.toLocaleString()}`;
+  $('cashier-opening-form').classList.toggle('hidden', !!opening);
+  $('cashier-withdrawal-form').classList.toggle('hidden', !opening);
+  $('cashier-opening-note').classList.toggle('hidden', !opening);
+  $('cashier-entry-tbody').innerHTML = entries.length
+    ? entries.map((entry) => `
+      <tr>
+        <td class="py-2 px-3">${esc(entry.time || '')}</td>
+        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Starting cash' : 'Cash taken out'}</td>
+        <td class="py-2 px-3">${esc(entry.takenBy || '—')}</td>
+        <td class="py-2 px-3">${esc(entry.recordedBy || '—')}</td>
+        <td class="py-2 px-3 text-right font-bold">${entry.type === 'WITHDRAWAL' ? '−' : ''} Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
+        <td class="py-2 px-3">${esc(entry.note || '—')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded today.</td></tr>';
+}
+
+async function addCashierEntry(type) {
+  const amountInput = type === 'OPENING' ? $('cashier-opening-amount') : $('cashier-withdrawal-amount');
+  const amount = Number(amountInput.value);
+  const takenBy = type === 'WITHDRAWAL' ? $('cashier-taken-by').value.trim() : '';
+  const note = type === 'WITHDRAWAL' ? $('cashier-withdrawal-note').value.trim() : '';
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an amount greater than zero.', 'error');
+  if (type === 'WITHDRAWAL' && !takenBy) return showToast('Enter the name of the person taking the cash.', 'error');
+
+  const button = type === 'OPENING' ? $('cashier-opening-button') : $('cashier-withdrawal-button');
+  button.disabled = true;
+  try {
+    const result = await Api.addCashierEntry({ type, amount, date: getTodayDate(), takenBy, note });
+    state.cashierEntries.unshift(result.entry);
+    amountInput.value = '';
+    if (type === 'WITHDRAWAL') {
+      $('cashier-taken-by').value = '';
+      $('cashier-withdrawal-note').value = '';
+    }
+    renderAll();
+    showToast(type === 'OPENING' ? 'Today’s opening cash was recorded.' : 'Cash withdrawal recorded and deducted from the drawer.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function setDailyCashOpening() { return addCashierEntry('OPENING'); }
+function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
+
+function openPosPrintOptions() { $('pos-print-options-modal').classList.remove('hidden'); }
+function closePosPrintOptions() { $('pos-print-options-modal').classList.add('hidden'); }
+function printPosDetailed() {
+  closePosPrintOptions();
+  printSection('pos-income-summary');
+}
+function printPosSummary() {
+  const sales = getPosIncomeSales();
+  const customerGroups = new Map();
+  const productGroups = new Map();
+  sales.forEach((sale) => {
+    const phone = phoneKey(sale.customerPhone);
+    const loyalty = phone.length >= 7 && (state.customers || [])
+      .some((customer) => phoneKey(customer.phone) === phone);
+    const name = sale.customer || 'Walk-in Customer';
+    const key = phone.length >= 7 ? `phone:${phone}` : `walk-in:${name.toLocaleLowerCase()}`;
+    if (!customerGroups.has(key)) {
+      customerGroups.set(key, { name, phone: sale.customerPhone || '', loyalty, sales: [], total: 0 });
+    }
+    const customer = customerGroups.get(key);
+    customer.sales.push(sale);
+    customer.total += Number(sale.totalRs || 0);
+
+    if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
+      sale.itemsDetails.forEach((item) => {
+        const productKey = String(item.id || item.name);
+        if (!productGroups.has(productKey)) {
+          productGroups.set(productKey, { name: item.name || 'Product', quantity: 0, unit: item.unitLabel || item.unitType || 'unit', total: 0 });
+        }
+        const product = productGroups.get(productKey);
+        product.quantity += Number(item.quantity || 0);
+        product.total += Number(item.lineTotal || 0);
+      });
+    } else {
+      const keyWithoutDetails = `other:${sale.itemsSummary || 'Item details unavailable'}`;
+      if (!productGroups.has(keyWithoutDetails)) {
+        productGroups.set(keyWithoutDetails, { name: sale.itemsSummary || 'Item details unavailable', quantity: 0, unit: 'details unavailable', total: 0 });
+      }
+      productGroups.get(keyWithoutDetails).total += Number(sale.totalRs || 0);
+    }
+  });
+  const groups = [...customerGroups.values()];
+  const walkIns = groups.filter((customer) => !customer.loyalty);
+  const loyaltyCustomers = groups.filter((customer) => customer.loyalty);
+  const total = sales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
+  const periodLabel = $('pos-income-period-label').innerText.replace(' — Total Collected', '');
+  const renderCustomers = (customers) => customers.length ? customers.map((customer) => {
+    const items = customer.sales.map(posSaleItemsText).filter(Boolean).join('; ');
+    const lastSale = customer.sales.reduce((latest, sale) => sale.date > latest ? sale.date : latest, '');
+    return `<tr>
+      <td>${esc(customer.name)}</td><td>${esc(customer.phone || 'Walk-in')}</td>
+      <td>${customer.sales.length}</td><td>${esc(lastSale)}</td><td>${esc(items || '—')}</td>
+      <td class="text-right">Rs. ${customer.total.toLocaleString()}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="6" class="text-center">No customers in this period.</td></tr>';
+  $('pos-summary-print-area').innerHTML = `
+    <header class="pos-print-header">
+      <h1>Raihan Farm Shop — POS Sales Summary</h1>
+      <p>${esc(periodLabel)} · Printed ${esc(new Date().toLocaleString())}</p>
+      <p>${sales.length} sales · ${walkIns.length} walk-in customers · ${loyaltyCustomers.length} loyalty customers · Total Rs. ${total.toLocaleString()}</p>
+    </header>
+    <h2>Walk-in Customers (${walkIns.length}) · Total Rs. ${walkIns.reduce((sum, customer) => sum + customer.total, 0).toLocaleString()}</h2>
+    <table><thead><tr><th>Customer</th><th>Phone</th><th>Bills</th><th>Last Sale</th><th>Products & Sale Details</th><th>Total</th></tr></thead><tbody>${renderCustomers(walkIns)}</tbody></table>
+    <h2>Loyalty Customers (${loyaltyCustomers.length}) · Total Rs. ${loyaltyCustomers.reduce((sum, customer) => sum + customer.total, 0).toLocaleString()}</h2>
+    <table><thead><tr><th>Customer</th><th>Phone</th><th>Bills</th><th>Last Sale</th><th>Products & Sale Details</th><th>Total</th></tr></thead><tbody>${renderCustomers(loyaltyCustomers)}</tbody></table>
+    <h2>Products Sold (${productGroups.size})</h2>
+    <table><thead><tr><th>Product</th><th>Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
+      `<tr><td>${esc(product.name)}</td><td>${product.quantity ? `${product.quantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>Rs. ${product.total.toLocaleString()}</td></tr>`
+    ).join('') || '<tr><td colspan="3" class="text-center">No product sales in this period.</td></tr>'}</tbody>
+      <tfoot><tr><th colspan="2">Overall Sales Total</th><th>Rs. ${total.toLocaleString()}</th></tr></tfoot>
+    </table>`;
+  closePosPrintOptions();
+  printSection('pos-summary-print-area');
+}
+
+function posSaleItemsText(sale) {
+  return Array.isArray(sale.itemsDetails) && sale.itemsDetails.length
+    ? sale.itemsDetails.map((item) => `${item.name || 'Product'} × ${Number(item.quantity || 0).toLocaleString()} ${item.unitLabel || item.unitType || 'unit'} (Rs. ${Number(item.lineTotal || 0).toLocaleString()})`).join(', ')
+    : (sale.itemsSummary || '');
 }
 
 // ---------- server sync ----------
@@ -185,7 +342,9 @@ function queueSave() {
 }
 
 function ensureStateCollections() {
-  if (state && !Array.isArray(state.customers)) state.customers = [];
+  if (!state) return;
+  if (!Array.isArray(state.customers)) state.customers = [];
+  if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
 }
 
 async function flushSave() {
@@ -1690,13 +1849,13 @@ function openPayslipModal(empId) {
 function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
 
 function printSection(elementId) {
-  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary'].forEach((id) => $(id).classList.remove('printable-active'));
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
   $(elementId).classList.add('printable-active');
   window.print();
 }
 
 window.addEventListener('afterprint', () => {
-  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary']
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area']
     .forEach((id) => $(id).classList.remove('printable-active'));
 });
 
@@ -1875,6 +2034,14 @@ function renderPosProducts() {
 
 function renderInventoryCards() {
   if (!state) return;
+  const uniqueNames = [...new Set(state.inventory.map((item) => String(item.name || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const uniqueSuppliers = [...new Set(state.inventory.map((item) => String(item.source || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  $('inventory-item-name-options').innerHTML = uniqueNames
+    .map((name) => `<option value="${esc(name)}"></option>`).join('');
+  $('inventory-supplier-options').innerHTML = uniqueSuppliers
+    .map((supplier) => `<option value="${esc(supplier)}"></option>`).join('');
   const isAdmin = currentUser && currentUser.role === 'admin';
   const query = ($('inventory-search')?.value || '').trim().toLocaleLowerCase();
   const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
@@ -1901,8 +2068,8 @@ function renderInventoryCards() {
         </div>
         ${isAdmin ? `
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
-          <div><label class="block text-xs text-slate-400 mb-1">Item Name</label><input type="text" id="inv-name-${esc(item.id)}" value="${esc(item.name)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
-          <div><label class="block text-xs text-slate-400 mb-1">Farm / Supplier Source</label><input type="text" id="inv-source-${esc(item.id)}" value="${esc(item.source)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          <div><label class="block text-xs text-slate-400 mb-1">Item Name</label><input type="text" id="inv-name-${esc(item.id)}" list="inventory-item-name-options" value="${esc(item.name)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          <div><label class="block text-xs text-slate-400 mb-1">Farm / Supplier Source</label><input type="text" id="inv-source-${esc(item.id)}" list="inventory-supplier-options" value="${esc(item.source)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
           <div class="sm:col-span-2"><label class="block text-xs text-slate-400 mb-1">Wholesale Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-wholesale-${esc(item.id)}" value="${Number(item.wholesalePrice || 0)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
         </div>` : ''}
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
