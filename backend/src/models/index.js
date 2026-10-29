@@ -25,7 +25,8 @@ const InventoryApproval = model('InventoryApproval', new Schema({
 
 const Customer = model('Customer', new Schema({
   ...base, id: String, name: String, phone: String, visitCount: { type: Number, default: 0 },
-  totalSpent: { type: Number, default: 0 }, lastVisit: String
+  totalSpent: { type: Number, default: 0 }, lastVisit: String,
+  loyaltyPoints: { type: Number, default: 0 }, loyaltyKgRemainder: { type: Number, default: 0 }
 }, opts));
 
 const SlaughterBatch = model('SlaughterBatch', new Schema({
@@ -36,7 +37,8 @@ const SlaughterBatch = model('SlaughterBatch', new Schema({
 
 const PosSale = model('PosSale', new Schema({
   ...base, id: String, date: String, time: String, customer: String, customerPhone: String, itemsSummary: String,
-  itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number
+  itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number,
+  loyaltyPointsEarned: Number, loyaltyPointsRedeemed: Number, loyaltyPointsBalanceAfter: Number, loyaltyFreeGiveawayKg: Number
 }, opts));
 
 const CashierEntry = model('CashierEntry', new Schema({

@@ -1569,13 +1569,86 @@ function renderPosCart() {
   $('pos-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
   $('pos-total-weight').innerText = `${totalKg.toFixed(2)} kg total dressed weight`;
   $('pos-grand-total').innerText = `Rs. ${Math.max(0, subtotal - discount).toLocaleString()}`;
+  updatePosLoyaltySummary();
+}
+
+function getPosLoyaltyCustomer(phone = $('pos-cust-phone').value) {
+  const key = phoneKey(phone);
+  return key.length >= 7
+    ? state.customers.find((entry) => phoneKey(entry.phone) === key)
+    : null;
+}
+
+function getPosLoyaltyPlan(itemsDetails, customerRecord, loyaltyEnabled = true) {
+  if (!loyaltyEnabled) {
+    return {
+      pointsEarned: 0, pointsRedeemed: 0, pointsBalanceAfter: 0,
+      loyaltyKgRemainderAfter: 0, freeGiveawayKg: 0, chicken: null
+    };
+  }
+  const qualifyingKg = itemsDetails
+    .filter((item) => item.unitType === 'kg' && !item.isLoyaltyFreeGiveaway)
+    .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const accumulatedKg = Math.max(0, Number(customerRecord?.loyaltyKgRemainder || 0)) + qualifyingKg;
+  const pointsEarned = Math.floor(accumulatedKg + 0.0000001);
+  const loyaltyKgRemainderAfter = +(accumulatedKg - pointsEarned).toFixed(4);
+  const pointsAvailable = Math.max(0, Number(customerRecord?.loyaltyPoints || 0)) + pointsEarned;
+  const chickenItems = state.inventory.filter((item) => inventoryUnit(item) === 'kg' && /chicken/i.test(item.name || ''));
+  const chicken = chickenItems.find((item) => String(item.name).trim().toLowerCase() === 'chicken') || chickenItems[0];
+  const chickenPurchasedKg = chicken
+    ? itemsDetails.filter((item) => String(item.id) === String(chicken.id) && !item.isLoyaltyFreeGiveaway)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    : 0;
+  const rewardStock = chicken
+    ? Math.max(0, inventoryStock(chicken) - chickenPurchasedKg)
+    : 0;
+  const rewardsAvailable = Math.floor(pointsAvailable / 100);
+  const freeGiveawayKg = Math.min(rewardsAvailable, Math.floor(rewardStock + 0.0000001));
+
+  return {
+    pointsEarned,
+    pointsRedeemed: freeGiveawayKg * 100,
+    pointsBalanceAfter: pointsAvailable - (freeGiveawayKg * 100),
+    loyaltyKgRemainderAfter,
+    freeGiveawayKg,
+    chicken
+  };
+}
+
+function updatePosLoyaltySummary() {
+  const summary = $('pos-loyalty-summary');
+  if (!summary || !state) return;
+  const phone = $('pos-cust-phone').value.trim();
+  const customerRecord = getPosLoyaltyCustomer(phone);
+  const key = phoneKey(phone);
+  if (key.length < 7) {
+    summary.innerText = 'Enter a customer phone number to track points. Earn 1 point per 1 kg of meat; 100 points = 1 kg Chicken free.';
+    return;
+  }
+
+  const basketItems = posCart.map((item) => ({ ...item }));
+  const plan = getPosLoyaltyPlan(basketItems, customerRecord);
+  const currentPoints = Math.max(0, Number(customerRecord?.loyaltyPoints || 0));
+  const projectedPoints = currentPoints + plan.pointsEarned;
+  const customerLabel = customerRecord ? `${currentPoints} point${currentPoints === 1 ? '' : 's'} balance`
+    : 'New loyalty customer • 0 points';
+  const earnedLabel = plan.pointsEarned
+    ? `This bill earns ${plan.pointsEarned} point${plan.pointsEarned === 1 ? '' : 's'}.`
+    : 'Add 1 kg of meat to earn 1 point.';
+  let rewardLabel = '';
+  if (projectedPoints >= 100 && plan.freeGiveawayKg > 0) {
+    rewardLabel = ` ${plan.freeGiveawayKg} kg Chicken loyalty giveaway will be added when you save this sale.`;
+  } else if (projectedPoints >= 100) {
+    rewardLabel = ' Reward available, but Chicken stock is insufficient; points will be kept until it is available.';
+  } else {
+    rewardLabel = ` ${100 - projectedPoints} more point${100 - projectedPoints === 1 ? '' : 's'} to a free 1 kg Chicken reward.`;
+  }
+  summary.innerText = `${customerLabel}. ${earnedLabel} 100 points = 1 kg Chicken free.${rewardLabel}`;
 }
 
 function lookupPosCustomer() {
   const phone = $('pos-cust-phone').value.trim();
-  const customer = phoneKey(phone).length >= 7
-    ? state.customers.find((entry) => phoneKey(entry.phone) === phoneKey(phone))
-    : null;
+  const customer = getPosLoyaltyCustomer(phone);
   const nameInput = $('pos-cust-name');
   const status = $('pos-customer-status');
   if (customer) {
@@ -1587,8 +1660,9 @@ function lookupPosCustomer() {
     if (nameInput.readOnly) nameInput.value = '';
     nameInput.readOnly = false;
     status.className = 'min-h-4 text-[11px] text-slate-400 mb-2';
-    status.innerText = phone ? 'New customer: enter a name to save this customer for loyalty.' : 'Customer details are optional. A phone number is needed for loyalty tracking.';
+    status.innerText = phone ? 'New loyalty customer. A name is optional; the phone number tracks points.' : 'Customer details are optional. A phone number is needed for loyalty tracking.';
   }
+  updatePosLoyaltySummary();
 }
 
 function completePosSale() {
@@ -1602,7 +1676,7 @@ function completePosSale() {
     ? state.customers.find((entry) => phoneKey(entry.phone) === customerPhoneKey)
     : null;
   const enteredName = $('pos-cust-name').value.trim();
-  const customer = customerRecord ? customerRecord.name : (enteredName || 'Walk-in Customer');
+  const customer = customerRecord ? customerRecord.name : (enteredName || (customerPhoneKey ? 'Loyalty Customer' : 'Walk-in Customer'));
   const payment = $('pos-pay-method').value;
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
@@ -1625,12 +1699,31 @@ function completePosSale() {
       packWeightGrams: ci.packWeightGrams, lineTotal: ci.lineTotal
     });
   });
-  const itemsSummary = posCart.map((c) => `${c.name} (${c.quantity} ${inventoryUnitLabel(c)}${c.quantity === 1 ? '' : 's'})`).join(', ');
+  const loyaltyPlan = getPosLoyaltyPlan(itemsDetails, customerRecord, customerPhoneKey.length >= 7);
+  if (loyaltyPlan.freeGiveawayKg > 0) {
+    const chicken = loyaltyPlan.chicken;
+    itemsDetails.push({
+      id: chicken.id, name: `${chicken.name} (Loyalty Free Giveaway)`,
+      unitType: 'kg', quantity: loyaltyPlan.freeGiveawayKg, unitLabel: 'kg',
+      unitPrice: inventoryPrice(chicken), weightKg: loyaltyPlan.freeGiveawayKg,
+      lineTotal: 0, isLoyaltyFreeGiveaway: true
+    });
+    itemsBreakdown[chicken.id] = (itemsBreakdown[chicken.id] || 0) + loyaltyPlan.freeGiveawayKg;
+  }
+  const itemsSummary = itemsDetails.map((item) => {
+    return `${item.name} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`;
+  }).join(', ');
+  const freeGiveawayKg = loyaltyPlan.freeGiveawayKg;
 
   pendingPosSale = {
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
-    totalKg: +totalKg.toFixed(2), payment, subtotal, discount, totalRs: grandTotal
+    totalKg: +(totalKg + freeGiveawayKg).toFixed(2), payment, subtotal, discount, totalRs: grandTotal,
+    loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
+    loyaltyPointsRedeemed: customerPhoneKey ? loyaltyPlan.pointsRedeemed : 0,
+    loyaltyPointsBalanceAfter: customerPhoneKey ? loyaltyPlan.pointsBalanceAfter : 0,
+    loyaltyKgRemainderAfter: customerPhoneKey ? loyaltyPlan.loyaltyKgRemainderAfter : 0,
+    loyaltyFreeGiveawayKg: customerPhoneKey ? freeGiveawayKg : 0
   };
   renderPosSaleReceipt(pendingPosSale);
   $('receipt-review-note').classList.remove('hidden');
@@ -1650,6 +1743,12 @@ function renderPosSaleReceipt(sale) {
   $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
   $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
   $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
+  $('rc-loyalty').innerText = sale.customerPhoneKey
+    ? `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} redeemed • ${sale.loyaltyPointsBalanceAfter} points remaining`
+    : 'Add a customer phone number to earn points.';
+  $('rc-loyalty-giveaway').innerText = sale.loyaltyFreeGiveawayKg
+    ? `${sale.loyaltyFreeGiveawayKg} kg Chicken — Loyalty Free Giveaway`
+    : '100 points = 1 kg Chicken free';
 }
 
 function editPosBill() {
@@ -1685,10 +1784,10 @@ function confirmPosSale() {
   let customerRecord = sale.customerPhoneKey
     ? state.customers.find((entry) => phoneKey(entry.phone) === sale.customerPhoneKey)
     : null;
-  if (!customerRecord && sale.customerPhoneKey && sale.enteredName) {
+  if (!customerRecord && sale.customerPhoneKey) {
     customerRecord = {
-      id: sale.customerPhoneKey, name: sale.customer, phone: sale.customerPhone,
-      visitCount: 0, totalSpent: 0, lastVisit: ''
+      id: sale.customerPhoneKey, name: sale.enteredName || sale.customer, phone: sale.customerPhone,
+      visitCount: 0, totalSpent: 0, lastVisit: '', loyaltyPoints: 0, loyaltyKgRemainder: 0
     };
     state.customers.unshift(customerRecord);
   }
@@ -1696,11 +1795,15 @@ function confirmPosSale() {
     customerRecord.visitCount = Number(customerRecord.visitCount || 0) + 1;
     customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + sale.totalRs;
     customerRecord.lastVisit = sale.date;
+    customerRecord.loyaltyPoints = sale.loyaltyPointsBalanceAfter;
+    customerRecord.loyaltyKgRemainder = sale.loyaltyKgRemainderAfter;
   }
   state.posSales.unshift({
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
-    totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs
+    totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs,
+    loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
+    loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
   });
   if (sale.payment === 'CREDIT') {
     state.receivablesList.unshift({
@@ -1715,6 +1818,7 @@ function confirmPosSale() {
   $('pos-cust-name').value = '';
   $('pos-cust-name').readOnly = false;
   $('pos-customer-status').innerText = '';
+  updatePosLoyaltySummary();
   $('pos-discount').value = 0;
   $('receipt-review-note').classList.add('hidden');
   $('receipt-preview-actions').classList.add('hidden');

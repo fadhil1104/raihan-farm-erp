@@ -281,6 +281,7 @@
           <div class="flex justify-between"><span>Subtotal:</span><span id="rc-subtotal">Rs. 0</span></div>
           <div class="flex justify-between text-slate-600"><span>Discount:</span><span id="rc-discount">- Rs. 0</span></div>
           <div class="flex justify-between font-black text-sm pt-1 border-t border-slate-300"><span>TOTAL PAID:</span><span id="rc-total">Rs. 0</span></div>
+          <div class="border-t border-dashed border-slate-300 pt-2 text-[10px]"><p class="font-bold">LOYALTY: <span id="rc-loyalty"></span></p><p id="rc-loyalty-giveaway" class="mt-1"></p></div>
         </div>
         <div class="text-center border-t border-dashed border-slate-300 pt-3 text-[10px] text-slate-500">
           <p class="font-bold text-slate-700">100% Halal • Freshly Dressed from Raihan Own Farm</p>
@@ -755,7 +756,7 @@
       <div class="border-b border-slate-800 pb-4">
         <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Walk-In & Counter Billing</span>
         <h2 class="text-2xl font-black mt-1">Raihan Farm Shop — Point of Sale (POS)</h2>
-        <p class="text-slate-400 text-sm">Search items, sell meat by weight or packaged goods by whole quantity, and print the customer receipt. Stock is deducted automatically.</p>
+        <p class="text-slate-400 text-sm">Search items, sell meat by weight or packaged goods by whole quantity, and print the customer receipt. Earn 1 loyalty point per 1 kg of meat; redeem 100 points for 1 kg Chicken free. Stock is deducted automatically.</p>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div class="lg:col-span-7 space-y-5">
@@ -810,6 +811,7 @@
                 </select>
               </div>
               <div id="pos-customer-status" class="min-h-4 text-[11px] text-slate-400 mb-2" aria-live="polite"></div>
+              <div id="pos-loyalty-summary" class="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-950/30 px-3 py-2 text-[11px] text-emerald-200" aria-live="polite"></div>
               <div id="pos-cart-list" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
             </div>
             <div class="border-t border-slate-800 pt-4 space-y-3">
