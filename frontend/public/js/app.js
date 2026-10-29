@@ -1067,10 +1067,45 @@ function getDayInventoryRows(snapshot, sales) {
       historicalStockAvailable: true
     }];
   }));
+  const addCurrentInventoryItem = (item) => {
+    const key = String(item.id);
+    if (rows.has(key)) return;
+    const unitType = inventoryUnit(item);
+    rows.set(key, {
+      id: item.id,
+      name: item.name,
+      source: item.source || '',
+      unitType,
+      unitLabel: inventoryUnitLabel(item),
+      openingStock: null,
+      addedStock: null,
+      soldStock: 0,
+      closingStock: null,
+      price: null,
+      historicalStockAvailable: false
+    });
+  };
   const addSoldProduct = (itemId, detail = {}) => {
     const key = String(itemId || '');
     if (!key || rows.has(key)) return;
     const inventoryItem = state.inventory.find((item) => String(item.id) === key);
+    if (!inventoryItem) {
+      const unitType = detail.unitType || 'kg';
+      rows.set(key, {
+        id: key,
+        name: detail.name || 'Inventory item',
+        source: '',
+        unitType,
+        unitLabel: detail.unitLabel || unitType,
+        openingStock: null,
+        addedStock: null,
+        soldStock: 0,
+        closingStock: null,
+        price: null,
+        historicalStockAvailable: false
+      });
+      return;
+    }
     const unitType = detail.unitType || inventoryItem?.unitType || 'kg';
     rows.set(key, {
       id: key,
@@ -1101,6 +1136,7 @@ function getDayInventoryRows(snapshot, sales) {
       });
     }
   });
+  state.inventory.forEach(addCurrentInventoryItem);
   return [...rows.values()];
 }
 
@@ -1113,6 +1149,7 @@ function renderCalendarDayInspector() {
   if (picker && picker.value !== selectedArchiveDate) picker.value = selectedArchiveDate;
   const isRange = Boolean(archiveDateRange);
   const range = archiveDateRange;
+  if (!isRange && selectedArchiveDate === getTodayDate()) syncTodayIntoDailyVault();
   const snap = isRange ? null : getDaySnapshot(selectedArchiveDate);
   const sales = isRange
     ? (state.posSales || []).filter((sale) => sale.date >= range.from && sale.date <= range.to)
