@@ -50,6 +50,7 @@ let state = null;                       // loaded from the API after login
 let currentUser = null;                 // { username, role, label }
 let selectedPosCategoryId = null;
 let posCart = [];
+let pendingPosSale = null;
 let posIncomePeriod = 'DAY';
 let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
@@ -1293,7 +1294,7 @@ function completePosSale() {
   if (customerPhone && (customerPhoneKey.length < 7 || customerPhoneKey.length > 15)) {
     return showToast('Enter a valid phone number or leave it blank.', 'error');
   }
-  let customerRecord = customerPhoneKey
+  const customerRecord = customerPhoneKey
     ? state.customers.find((entry) => phoneKey(entry.phone) === customerPhoneKey)
     : null;
   const enteredName = $('pos-cust-name').value.trim();
@@ -1309,11 +1310,10 @@ function completePosSale() {
   const itemsBreakdown = {};
   const itemsDetails = [];
   posCart.forEach((ci) => {
-    const inv = state.inventory.find((i) => i.id === ci.id);
+    const inv = state.inventory.find((i) => String(i.id) === String(ci.id));
     if (inv && ci.unitType === 'kg') {
-      inv.stockKg = Math.max(0, +(inv.stockKg - ci.quantity).toFixed(2));
       itemsBreakdown[ci.id] = (itemsBreakdown[ci.id] || 0) + ci.quantity;
-    } else if (inv) inv.stockQuantity = Math.max(0, Number(inv.stockQuantity || 0) - ci.quantity);
+    }
     itemsDetails.push({
       id: ci.id, name: ci.name, unitType: ci.unitType, quantity: ci.quantity,
       unitLabel: inventoryUnitLabel(ci), unitPrice: ci.unitPrice,
@@ -1323,46 +1323,108 @@ function completePosSale() {
   });
   const itemsSummary = posCart.map((c) => `${c.name} (${c.quantity} ${inventoryUnitLabel(c)}${c.quantity === 1 ? '' : 's'})`).join(', ');
 
-  if (!customerRecord && customerPhoneKey && enteredName) {
-    customerRecord = { id: customerPhoneKey, name: customer, phone: customerPhone, visitCount: 0, totalSpent: 0, lastVisit: '' };
+  pendingPosSale = {
+    id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
+    customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
+    totalKg: +totalKg.toFixed(2), payment, subtotal, discount, totalRs: grandTotal
+  };
+  renderPosSaleReceipt(pendingPosSale);
+  $('receipt-review-note').classList.remove('hidden');
+  $('receipt-preview-actions').classList.remove('hidden');
+  $('receipt-saved-actions').classList.add('hidden');
+  $('receipt-modal').classList.remove('hidden');
+}
+
+function renderPosSaleReceipt(sale) {
+  $('rc-id').innerText = `#${sale.id}`;
+  $('rc-customer').innerText = sale.customer;
+  $('rc-phone').innerText = sale.customerPhone || '—';
+  $('rc-date').innerText = `${sale.date} ${sale.time}`;
+  $('rc-payment').innerText = sale.payment;
+  $('rc-items').innerHTML = sale.itemsDetails.map((item) => `
+    <div class="grid grid-cols-12"><span class="col-span-6 truncate">${esc(item.name)}</span><span class="col-span-2 text-right">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel)}</span><span class="col-span-4 text-right">Rs.${Number(item.lineTotal).toLocaleString()}</span></div>`).join('');
+  $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
+  $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
+  $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
+}
+
+function editPosBill() {
+  if (!pendingPosSale) return;
+  pendingPosSale = null;
+  $('receipt-modal').classList.add('hidden');
+}
+
+function confirmPosSale() {
+  const sale = pendingPosSale;
+  if (!sale) return showToast('No pending bill to save.', 'error');
+
+  const quantities = new Map();
+  sale.itemsDetails.forEach((item) => {
+    const key = String(item.id);
+    quantities.set(key, (quantities.get(key) || 0) + Number(item.quantity));
+  });
+  for (const [id, quantity] of quantities) {
+    const item = state.inventory.find((entry) => String(entry.id) === id);
+    if (!item) return showToast('An item in this bill no longer exists. Review the bill before saving.', 'error');
+    const stockTolerance = inventoryUnit(item) === 'kg' ? 0.000001 : 0;
+    if (inventoryStock(item) + stockTolerance < quantity) {
+      return showToast(`${item.name} does not have enough stock to complete this sale.`, 'error');
+    }
+  }
+
+  quantities.forEach((quantity, id) => {
+    const item = state.inventory.find((entry) => String(entry.id) === id);
+    if (inventoryUnit(item) === 'kg') item.stockKg = Math.max(0, +(Number(item.stockKg || 0) - quantity).toFixed(2));
+    else item.stockQuantity = Math.max(0, Number(item.stockQuantity || 0) - quantity);
+  });
+
+  let customerRecord = sale.customerPhoneKey
+    ? state.customers.find((entry) => phoneKey(entry.phone) === sale.customerPhoneKey)
+    : null;
+  if (!customerRecord && sale.customerPhoneKey && sale.enteredName) {
+    customerRecord = {
+      id: sale.customerPhoneKey, name: sale.customer, phone: sale.customerPhone,
+      visitCount: 0, totalSpent: 0, lastVisit: ''
+    };
     state.customers.unshift(customerRecord);
   }
   if (customerRecord) {
     customerRecord.visitCount = Number(customerRecord.visitCount || 0) + 1;
-    customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + grandTotal;
-    customerRecord.lastVisit = getTodayDate();
+    customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + sale.totalRs;
+    customerRecord.lastVisit = sale.date;
   }
   state.posSales.unshift({
-    id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
-    itemsSummary, itemsBreakdown, itemsDetails, totalKg: +totalKg.toFixed(2), payment, totalRs: grandTotal
+    id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
+    itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
+    totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs
   });
-
-  if (payment === 'CREDIT') {
-    state.receivablesList.unshift({ id: receiptId, date: getTodayDate(), customer, phone: customerPhone, details: itemsSummary, amount: grandTotal, status: 'Pending' });
+  if (sale.payment === 'CREDIT') {
+    state.receivablesList.unshift({
+      id: sale.id, date: sale.date, customer: sale.customer, phone: sale.customerPhone,
+      details: sale.itemsSummary, amount: sale.totalRs, status: 'Pending'
+    });
   }
 
-  $('rc-id').innerText = `#${receiptId}`;
-  $('rc-customer').innerText = customer;
-  $('rc-phone').innerText = customerPhone;
-  $('rc-date').innerText = `${getTodayDate()} ${nowTime}`;
-  $('rc-payment').innerText = payment;
-  $('rc-items').innerHTML = posCart.map((c) => `
-    <div class="grid grid-cols-12"><span class="col-span-6 truncate">${esc(c.name)}</span><span class="col-span-2 text-right">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}</span><span class="col-span-4 text-right">Rs.${c.lineTotal.toLocaleString()}</span></div>`).join('');
-  $('rc-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
-  $('rc-discount').innerText = `- Rs. ${discount.toLocaleString()}`;
-  $('rc-total').innerText = `Rs. ${grandTotal.toLocaleString()}`;
-
+  pendingPosSale = null;
   posCart = [];
   $('pos-cust-phone').value = '';
   $('pos-cust-name').value = '';
   $('pos-cust-name').readOnly = false;
   $('pos-customer-status').innerText = '';
   $('pos-discount').value = 0;
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.remove('hidden');
   saveState();
-  $('receipt-modal').classList.remove('hidden');
-  showToast(`Sale ${receiptId} completed! Inventory updated & receipt ready.`, 'success');
+  showToast(`Sale ${sale.id} saved! Inventory updated and receipt ready.`, 'success');
 }
-function closeReceiptModal() { $('receipt-modal').classList.add('hidden'); }
+function closeReceiptModal() {
+  pendingPosSale = null;
+  $('receipt-modal').classList.add('hidden');
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.add('hidden');
+}
 
 // ---------- MODULE 5 & 6: attendance, wall QR, payroll ----------
 function openWallQrModal() {
