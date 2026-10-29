@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { collections, DailyVault, InventoryItem, CashierEntry, PosSale } = require('../models');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { randomUUID } = require('node:crypto');
 
 const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
@@ -176,6 +176,11 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     }
     throw err;
   }
+});
+
+router.delete('/cashier-entries', requireAuth, requireAdmin, async (req, res) => {
+  const result = await CashierEntry.deleteMany({});
+  res.json({ ok: true, deletedCount: result.deletedCount });
 });
 
 router.post('/inventory/:id/stock', requireAuth, async (req, res) => {

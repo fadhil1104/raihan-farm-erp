@@ -187,6 +187,7 @@ function renderCashierDrawer() {
   $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
   $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
   $('cashier-current-balance').innerText = `Rs. ${balance.toLocaleString()}`;
+  $('cashier-reset-button').classList.toggle('hidden', currentUser?.role !== 'admin');
   $('cashier-opening-form').classList.toggle('hidden', !!opening);
   $('cashier-withdrawal-form').classList.toggle('hidden', !opening);
   $('cashier-opening-note').classList.toggle('hidden', !opening);
@@ -232,6 +233,29 @@ async function addCashierEntry(type) {
 
 function setDailyCashOpening() { return addCashierEntry('OPENING'); }
 function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
+
+async function resetCashierDrawer() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    return showToast('Only an admin can reset the cashier drawer.', 'error');
+  }
+  const confirmed = window.confirm(
+    'Reset the cashier drawer? This permanently deletes all recorded opening cash and withdrawals for every date. POS sales are not deleted.'
+  );
+  if (!confirmed) return;
+
+  const button = $('cashier-reset-button');
+  button.disabled = true;
+  try {
+    await Api.resetCashierDrawer();
+    state.cashierEntries = [];
+    renderAll();
+    showToast('Cashier drawer records were reset. POS sales remain unchanged.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
 
 function openPosPrintOptions() { $('pos-print-options-modal').classList.remove('hidden'); }
 function closePosPrintOptions() { $('pos-print-options-modal').classList.add('hidden'); }
