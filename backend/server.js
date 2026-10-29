@@ -7,6 +7,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 
 const connectDB = require('./src/config/db');
+const { seedDatabase } = require('./src/seed/seedData');
 
 const app = express();
 
@@ -88,6 +89,7 @@ if (require.main === module) {
   const port = process.env.PORT || 5000;
 
   connectDB()
+    .then(() => seedDatabase())
     .then(() => {
       app.listen(port, () => {
         console.log(`Raihan Farm ERP API running on port ${port}`);
