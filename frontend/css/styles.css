@@ -16,4 +16,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #facc15
   .printable-active, .printable-active * { visibility: visible; }
   .printable-active { position: absolute; left: 0; top: 0; width: 100%; background: white !important; color: black !important; padding: 20px !important; border: none !important; box-shadow: none !important; }
   .no-print { display: none !important; }
+  .printable-active#pos-income-summary, .printable-active#pos-income-summary * {
+    color: black !important;
+    background: transparent !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
+  }
+  .printable-active#pos-income-summary { background: white !important; }
+  .printable-active#pos-income-summary table { width: 100%; border-collapse: collapse; }
+  .printable-active#pos-income-summary th,
+  .printable-active#pos-income-summary td { border-bottom: 1px solid #bbb; }
 }

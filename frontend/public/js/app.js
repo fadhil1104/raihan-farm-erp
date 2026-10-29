@@ -50,7 +50,7 @@ let state = null;                       // loaded from the API after login
 let currentUser = null;                 // { username, role, label }
 let selectedPosCategoryId = null;
 let posCart = [];
-let posIncomePeriod = '12H';
+let posIncomePeriod = 'DAY';
 let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
@@ -108,9 +108,10 @@ function renderPosSalesHistory() {
   yearFilter?.classList.toggle('hidden', posIncomePeriod !== 'YEAR');
 
   const now = Date.now();
-  const windowMs = posIncomePeriod === '12H' ? 12 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
   const sales = (state.posSales || []).filter((sale) => {
     const date = String(sale.date || '');
+    if (posIncomePeriod === 'DAY') return date === getTodayDate();
     if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
     if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
     const timestamp = getPosSaleTimestamp(sale);
@@ -128,7 +129,7 @@ function renderPosSalesHistory() {
   $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
   $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
 
-  const periodLabel = posIncomePeriod === '12H' ? 'Past 12 Hours'
+  const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
     : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
     : posIncomePeriod === 'MONTH' ? `Month of ${posIncomeMonth}`
     : `Year ${posIncomeYear}`;
@@ -1613,10 +1614,15 @@ function openPayslipModal(empId) {
 function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
 
 function printSection(elementId) {
-  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary'].forEach((id) => $(id).classList.remove('printable-active'));
   $(elementId).classList.add('printable-active');
   window.print();
 }
+
+window.addEventListener('afterprint', () => {
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary']
+    .forEach((id) => $(id).classList.remove('printable-active'));
+});
 
 // ---------- MODULE 7: deliveries & subscriptions ----------
 function addDelivery() {

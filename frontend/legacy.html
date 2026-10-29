@@ -817,16 +817,16 @@
           </div>
         </div>
       </div>
-      <div class="card p-5 space-y-4">
+      <div id="pos-income-summary" class="card p-5 space-y-4">
         <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
           <div>
             <h3 class="font-bold text-base text-white">POS Income Summary</h3>
             <p class="text-xs text-slate-400">Cash and card/QR/transfer collected; credit sales are excluded until payment.</p>
           </div>
-          <div class="flex flex-wrap items-end gap-2">
+          <div class="flex flex-wrap items-end gap-2 no-print">
             <label for="pos-income-period" class="text-xs text-slate-400 font-semibold">Period</label>
             <select id="pos-income-period" onchange="setPosIncomePeriod(this.value)" class="px-3 py-2 rounded-lg text-sm">
-              <option value="12H">Past 12 Hours</option>
+              <option value="DAY">Current Day</option>
               <option value="WEEK">Weekly (Past 7 Days)</option>
               <option value="MONTH">Monthly</option>
               <option value="YEAR">Yearly</option>
@@ -849,12 +849,17 @@
             <strong id="pos-income-card" class="text-lg font-black text-sky-400">Rs. 0</strong>
           </div>
           <div class="rounded-xl border border-yellow-500/30 bg-slate-950/70 p-3">
-            <span id="pos-income-period-label" class="text-[10px] uppercase font-bold text-yellow-400 block">Past 12 Hours — Total Collected</span>
+            <span id="pos-income-period-label" class="text-[10px] uppercase font-bold text-yellow-400 block">Current Day — Total Collected</span>
             <strong id="pos-income-total" class="text-lg font-black text-white">Rs. 0</strong>
           </div>
         </div>
+        <div class="flex justify-end no-print">
+          <button onclick="printSection('pos-income-summary')" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wide">
+            <i class="fa-solid fa-print mr-1"></i> Print Income Summary
+          </button>
+        </div>
         <div class="overflow-x-auto">
-        <h3 id="pos-history-heading" class="font-bold text-sm text-white mb-3">Past 12 Hours — Completed POS Transactions</h3>
+        <h3 id="pos-history-heading" class="font-bold text-sm text-white mb-3">Current Day — Completed POS Transactions</h3>
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
