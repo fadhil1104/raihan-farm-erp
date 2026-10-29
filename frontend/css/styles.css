@@ -5,6 +5,12 @@ body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-co
 .card-highlight { background: linear-gradient(145deg, #1e293b 0%, #151c2c 100%); border: 1px solid rgba(250, 204, 21, 0.35); border-radius: 0.9rem; }
 input, select, textarea { background-color: #0b0f19 !important; border: 1px solid #334155 !important; color: #f8fafc !important; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: #facc15 !important; box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.25); }
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(82%) sepia(91%) saturate(1513%) hue-rotate(359deg) brightness(101%) contrast(102%);
+  cursor: pointer;
+}
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #0b0f19; }
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
