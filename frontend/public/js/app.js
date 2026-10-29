@@ -1282,7 +1282,7 @@ function lookupPosCustomer() {
     if (nameInput.readOnly) nameInput.value = '';
     nameInput.readOnly = false;
     status.className = 'min-h-4 text-[11px] text-slate-400 mb-2';
-    status.innerText = phone ? 'New customer: enter their name to continue.' : 'Customer phone and name are required before printing the bill.';
+    status.innerText = phone ? 'New customer: enter a name to save this customer for loyalty.' : 'Customer details are optional. A phone number is needed for loyalty tracking.';
   }
 }
 
@@ -1290,10 +1290,14 @@ function completePosSale() {
   if (posCart.length === 0) return showToast('Please add at least one item to the bill.', 'error');
   const customerPhone = $('pos-cust-phone').value.trim();
   const customerPhoneKey = phoneKey(customerPhone);
-  if (customerPhoneKey.length < 7 || customerPhoneKey.length > 15) return showToast('Enter a valid customer phone number before printing the bill.', 'error');
-  let customerRecord = state.customers.find((entry) => phoneKey(entry.phone) === customerPhoneKey);
-  const customer = customerRecord ? customerRecord.name : $('pos-cust-name').value.trim();
-  if (!customer) return showToast('Enter the new customer name before printing the bill.', 'error');
+  if (customerPhone && (customerPhoneKey.length < 7 || customerPhoneKey.length > 15)) {
+    return showToast('Enter a valid phone number or leave it blank.', 'error');
+  }
+  let customerRecord = customerPhoneKey
+    ? state.customers.find((entry) => phoneKey(entry.phone) === customerPhoneKey)
+    : null;
+  const enteredName = $('pos-cust-name').value.trim();
+  const customer = customerRecord ? customerRecord.name : (enteredName || 'Walk-in Customer');
   const payment = $('pos-pay-method').value;
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
@@ -1319,13 +1323,15 @@ function completePosSale() {
   });
   const itemsSummary = posCart.map((c) => `${c.name} (${c.quantity} ${inventoryUnitLabel(c)}${c.quantity === 1 ? '' : 's'})`).join(', ');
 
-  if (!customerRecord) {
+  if (!customerRecord && customerPhoneKey && enteredName) {
     customerRecord = { id: customerPhoneKey, name: customer, phone: customerPhone, visitCount: 0, totalSpent: 0, lastVisit: '' };
     state.customers.unshift(customerRecord);
   }
-  customerRecord.visitCount = Number(customerRecord.visitCount || 0) + 1;
-  customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + grandTotal;
-  customerRecord.lastVisit = getTodayDate();
+  if (customerRecord) {
+    customerRecord.visitCount = Number(customerRecord.visitCount || 0) + 1;
+    customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + grandTotal;
+    customerRecord.lastVisit = getTodayDate();
+  }
   state.posSales.unshift({
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
     itemsSummary, itemsBreakdown, itemsDetails, totalKg: +totalKg.toFixed(2), payment, totalRs: grandTotal

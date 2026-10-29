@@ -793,8 +793,8 @@
                 <button onclick="clearPosCart()" class="text-xs text-red-400 hover:text-red-300 font-semibold"><i class="fa-solid fa-trash-can mr-1"></i> Clear</button>
               </div>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-1">
-                <input type="tel" id="pos-cust-phone" oninput="lookupPosCustomer()" placeholder="Customer phone (required)" autocomplete="tel" class="px-3 py-2 rounded-lg text-xs">
-                <input type="text" id="pos-cust-name" placeholder="Customer name (required for new customer)" autocomplete="name" class="px-3 py-2 rounded-lg text-xs">
+                <input type="tel" id="pos-cust-phone" oninput="lookupPosCustomer()" placeholder="Customer phone (optional; for loyalty)" autocomplete="tel" class="px-3 py-2 rounded-lg text-xs">
+                <input type="text" id="pos-cust-name" placeholder="Customer name (optional)" autocomplete="name" class="px-3 py-2 rounded-lg text-xs">
                 <select id="pos-pay-method" class="px-3 py-2 rounded-lg text-xs font-bold sm:col-span-2">
                   <option value="CASH">Cash Payment</option>
                   <option value="CARD">Card / POS Machine</option>
