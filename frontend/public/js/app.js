@@ -452,20 +452,41 @@ function syncTodayIntoDailyVault() {
   const todaysSales = todaysPosSales();
   const todaysBatches = state.slaughterBatches.filter((b) => String(b.date).startsWith(today));
   if (!state.dailyVault) state.dailyVault = {};
-  if (todaysSales.length === 0 && todaysBatches.length === 0 && !state.dailyVault[today]) return;
   state.dailyVault[today] = {
     date: today,
     posSales: JSON.parse(JSON.stringify(todaysSales)),
     slaughterBatches: JSON.parse(JSON.stringify(todaysBatches)),
-    inventorySnapshot: state.inventory.filter((item) => inventoryUnit(item) === 'kg').map((item) => {
-      const slaughterInKg = todaysBatches.reduce((total, batch) => total + batchOutputs(batch)
+    inventorySnapshot: state.inventory.map((item) => {
+      const unitType = inventoryUnit(item);
+      const unitLabel = inventoryUnitLabel(item);
+      const kg = unitType === 'kg';
+      const addedStock = kg ? todaysBatches.reduce((total, batch) => total + batchOutputs(batch)
         .filter((output) => String(output.categoryId) === String(item.id))
-        .reduce((sum, output) => sum + Number(output.actualKg || 0), 0), 0);
-      let soldKg = 0;
-      todaysSales.forEach((sale) => { if (sale.itemsBreakdown && sale.itemsBreakdown[item.id]) soldKg += Number(sale.itemsBreakdown[item.id]); });
-      const closingKg = Number(item.stockKg || 0);
-      const openingKg = Math.max(0, +(closingKg - slaughterInKg + soldKg).toFixed(2));
-      return { id: item.id, name: item.name, openingKg, slaughterInKg: +slaughterInKg.toFixed(2), soldKg: +soldKg.toFixed(2), closingKg: +closingKg.toFixed(2), pricePerKg: item.pricePerKg };
+        .reduce((sum, output) => sum + Number(output.actualKg || 0), 0), 0) : 0;
+      let soldStock = 0;
+      todaysSales.forEach((sale) => {
+        if (Array.isArray(sale.itemsDetails)) {
+          sale.itemsDetails.forEach((detail) => {
+            if (String(detail.id) === String(item.id)) soldStock += Number(detail.quantity || 0);
+          });
+        } else if (kg && sale.itemsBreakdown?.[item.id]) {
+          soldStock += Number(sale.itemsBreakdown[item.id]);
+        }
+      });
+      const closingStock = inventoryStock(item);
+      const precision = kg ? 2 : 0;
+      const openingStock = Math.max(0, +(closingStock - addedStock + soldStock).toFixed(precision));
+      return {
+        id: item.id, name: item.name, source: item.source, unitType, unitLabel,
+        openingStock, addedStock: +addedStock.toFixed(precision), soldStock: +soldStock.toFixed(precision),
+        closingStock: +closingStock.toFixed(precision), price: inventoryPrice(item),
+        // Keep the original kg fields for older archive readers and backups.
+        ...(kg ? {
+          openingKg: openingStock, slaughterInKg: +addedStock.toFixed(2),
+          soldKg: +soldStock.toFixed(2), closingKg: +closingStock.toFixed(2),
+          pricePerKg: inventoryPrice(item)
+        } : {})
+      };
     })
   };
 }
@@ -762,6 +783,10 @@ function adjustVaultSnapshot(vault, output, deltaKg) {
   if (row) {
     row.slaughterInKg = Math.max(0, Number(row.slaughterInKg || 0) + deltaKg);
     row.closingKg = Math.max(0, Number(row.closingKg || 0) + deltaKg);
+    if (row.unitType) {
+      row.addedStock = Math.max(0, Number(row.addedStock || 0) + deltaKg);
+      row.closingStock = Math.max(0, Number(row.closingStock || 0) + deltaKg);
+    }
   }
 }
 
@@ -1026,6 +1051,63 @@ function getDaySnapshot(dateStr) {
   };
 }
 
+function getDayInventoryRows(snapshot, sales) {
+  const rows = new Map((snapshot.inventorySnapshot || []).map((row) => {
+    const unitType = row.unitType || 'kg';
+    const kg = unitType === 'kg';
+    return [String(row.id), {
+      ...row,
+      unitType,
+      unitLabel: row.unitLabel || (kg ? 'kg' : unitType),
+      openingStock: Number(row.openingStock ?? row.openingKg ?? 0),
+      addedStock: Number(row.addedStock ?? row.slaughterInKg ?? 0),
+      soldStock: Number(row.soldStock ?? row.soldKg ?? 0),
+      closingStock: Number(row.closingStock ?? row.closingKg ?? 0),
+      price: Number(row.price ?? row.pricePerKg ?? 0),
+      historicalStockAvailable: true
+    }];
+  }));
+  const addSoldProduct = (itemId, detail = {}) => {
+    const key = String(itemId || '');
+    if (!key || rows.has(key)) return;
+    const inventoryItem = state.inventory.find((item) => String(item.id) === key);
+    const unitType = detail.unitType || inventoryItem?.unitType || 'kg';
+    rows.set(key, {
+      id: key,
+      name: detail.name || inventoryItem?.name || 'Inventory item',
+      source: inventoryItem?.source || '',
+      unitType,
+      unitLabel: detail.unitLabel || (inventoryItem ? inventoryUnitLabel(inventoryItem) : unitType),
+      openingStock: null,
+      addedStock: null,
+      soldStock: 0,
+      closingStock: null,
+      price: null,
+      historicalStockAvailable: false
+    });
+  };
+  sales.forEach((sale) => {
+    if (Array.isArray(sale.itemsDetails)) {
+      sale.itemsDetails.forEach((detail) => {
+        addSoldProduct(detail.id, detail);
+        const row = rows.get(String(detail.id || ''));
+        if (row && !row.historicalStockAvailable) row.soldStock += Number(detail.quantity || 0);
+      });
+    } else {
+      Object.entries(sale.itemsBreakdown || {}).forEach(([itemId, quantity]) => {
+        addSoldProduct(itemId);
+        const row = rows.get(String(itemId));
+        if (row && !row.historicalStockAvailable) row.soldStock += Number(quantity || 0);
+      });
+    }
+  });
+  return [...rows.values()];
+}
+
+function formatMovementQuantity(value, unitLabel, digits = unitLabel === 'kg' ? 2 : 0) {
+  return value === null || value === undefined ? '—' : `${Number(value).toFixed(digits)} ${unitLabel}`;
+}
+
 function renderCalendarDayInspector() {
   const picker = $('archive-calendar-picker');
   if (picker && picker.value !== selectedArchiveDate) picker.value = selectedArchiveDate;
@@ -1041,6 +1123,7 @@ function renderCalendarDayInspector() {
       return date >= range.from && date <= range.to;
     })
     : snap.slaughterBatches;
+  const inventoryRows = isRange ? [] : getDayInventoryRows(snap, sales);
   const dateLabel = isRange ? `${range.from} to ${range.to}` : selectedArchiveDate;
   const hasDailyRecord = Boolean(snap && (snap.inventorySnapshot.length || sales.length || batches.length));
   const dayPosTotal = sales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
@@ -1064,16 +1147,16 @@ function renderCalendarDayInspector() {
   $('calendar-day-sales-panel').classList.toggle('lg:col-span-12', isRange);
   $('calendar-day-sales-panel').classList.toggle('lg:col-span-5', !isRange);
 
-  $('cal-day-inventory-tbody').innerHTML = isRange ? '' : snap.inventorySnapshot.length === 0
+  $('cal-day-inventory-tbody').innerHTML = isRange ? '' : inventoryRows.length === 0
     ? '<tr><td colspan="6" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
-    : snap.inventorySnapshot.map((row) => `
+    : inventoryRows.map((row) => `
     <tr class="hover:bg-slate-800/40 transition">
-      <td class="py-2 px-2 font-bold text-white">${esc(row.name)}</td>
-      <td class="py-2 px-2 text-right text-slate-400">${Number(row.openingKg).toFixed(2)} kg</td>
-      <td class="py-2 px-2 text-right font-semibold text-sky-400">+${Number(row.slaughterInKg).toFixed(2)} kg</td>
-      <td class="py-2 px-2 text-right font-semibold text-amber-400">-${Number(row.soldKg).toFixed(2)} kg</td>
-      <td class="py-2 px-2 text-right font-black text-emerald-400">${Number(row.closingKg).toFixed(2)} kg</td>
-      <td class="py-2 px-2 text-right text-yellow-400 font-bold">Rs. ${Number(row.pricePerKg).toLocaleString()}</td>
+      <td class="py-2 px-2 font-bold text-white">${esc(row.name)}${row.source ? `<span class="block text-[10px] font-normal text-slate-400">${esc(row.source)}</span>` : ''}</td>
+      <td class="py-2 px-2 text-right text-slate-400">${formatMovementQuantity(row.openingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-semibold text-sky-400">${row.addedStock === null ? '—' : `+${formatMovementQuantity(row.addedStock, row.unitLabel)}`}</td>
+      <td class="py-2 px-2 text-right font-semibold text-amber-400">-${formatMovementQuantity(row.soldStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-black text-emerald-400">${formatMovementQuantity(row.closingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right text-yellow-400 font-bold">${row.price === null ? '—' : `Rs. ${Number(row.price).toLocaleString()} / ${esc(row.unitLabel)}`}</td>
     </tr>`).join('');
 
   const salesHtml = sales.map((p) => `
@@ -1267,16 +1350,15 @@ function renderAnnualAnalytics() {
     </tr>`).join('');
 
   const snap = getDaySnapshot(selectedArchiveDate);
-  const today = getTodayDate();
-  const todaySales = (state.posSales || []).filter((sale) => sale.date === today);
   const printSales = archiveDateRange
     ? (state.posSales || []).filter((sale) => sale.date >= archiveDateRange.from && sale.date <= archiveDateRange.to)
-    : todaySales;
+    : snap.posSales;
+  const printInventoryRows = archiveDateRange ? [] : getDayInventoryRows(snap, printSales);
   const printSalesTotal = printSales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
   const printSalesKg = printSales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0);
   const printSalesHeading = archiveDateRange
     ? `POS Sales Details — ${archiveDateRange.from} to ${archiveDateRange.to}`
-    : `Today's POS Sales Details — ${today}`;
+    : `${selectedArchiveDate} POS Sales Details`;
   $('ar-day-snapshot-print').classList.remove('hidden');
   $('ar-day-snapshot-body').innerHTML = `
     <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">${esc(printSalesHeading)}</h5>
@@ -1302,7 +1384,7 @@ function renderAnnualAnalytics() {
         </tr>`).join('') : `<tr><td colspan="${archiveDateRange ? 7 : 6}" class="py-2 px-2 border border-slate-300 text-center">No POS sales recorded for this period.</td></tr>`}
       </tbody>
       <tfoot><tr class="bg-slate-100 font-bold">
-        <td colspan="${archiveDateRange ? 5 : 4}" class="py-1 px-2 border border-slate-300 text-right">${archiveDateRange ? 'Period POS Total' : "Today's POS Total"}</td>
+        <td colspan="${archiveDateRange ? 5 : 4}" class="py-1 px-2 border border-slate-300 text-right">${archiveDateRange ? 'Period POS Total' : 'Selected Date POS Total'}</td>
         <td class="py-1 px-2 border border-slate-300 text-right">${printSalesKg.toFixed(2)}</td>
         <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${printSalesTotal.toLocaleString()}</td>
       </tr></tfoot>
@@ -1313,15 +1395,17 @@ function renderAnnualAnalytics() {
     <p class="text-[11px] font-bold">Calendar Date Inspected: ${esc(selectedArchiveDate)}</p>
     <table class="w-full text-left border-collapse border border-slate-300 text-[10px]">
       <thead><tr class="bg-slate-200 text-slate-800 uppercase">
-        <th class="py-1 px-2 border border-slate-300">Meat Cut</th><th class="py-1 px-2 border border-slate-300 text-right">Opening (kg)</th>
-        <th class="py-1 px-2 border border-slate-300 text-right">Slaughter In (kg)</th><th class="py-1 px-2 border border-slate-300 text-right">POS Sold (kg)</th>
-        <th class="py-1 px-2 border border-slate-300 text-right">Closing Stock (kg)</th></tr></thead>
-      <tbody>${snap.inventorySnapshot.map((r) => `
-        <tr><td class="py-1 px-2 border border-slate-300 font-bold">${esc(r.name)}</td>
-        <td class="py-1 px-2 border border-slate-300 text-right">${Number(r.openingKg).toFixed(2)}</td>
-        <td class="py-1 px-2 border border-slate-300 text-right">+${Number(r.slaughterInKg).toFixed(2)}</td>
-        <td class="py-1 px-2 border border-slate-300 text-right">-${Number(r.soldKg).toFixed(2)}</td>
-        <td class="py-1 px-2 border border-slate-300 text-right font-bold">${Number(r.closingKg).toFixed(2)}</td></tr>`).join('')}</tbody>
+        <th class="py-1 px-2 border border-slate-300">Inventory Item</th><th class="py-1 px-2 border border-slate-300 text-right">Opening</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Added / Slaughter In</th><th class="py-1 px-2 border border-slate-300 text-right">POS Sold</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Closing Stock</th><th class="py-1 px-2 border border-slate-300 text-right">Rate / Unit</th></tr></thead>
+      <tbody>${printInventoryRows.length ? printInventoryRows.map((r) => `
+        <tr><td class="py-1 px-2 border border-slate-300 font-bold">${esc(r.name)}${r.source ? `<span class="block font-normal">${esc(r.source)}</span>` : ''}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${formatMovementQuantity(r.openingStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${r.addedStock === null ? '—' : `+${formatMovementQuantity(r.addedStock, r.unitLabel)}`}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">-${formatMovementQuantity(r.soldStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right font-bold">${formatMovementQuantity(r.closingStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${r.price === null ? '—' : `Rs. ${Number(r.price).toLocaleString()} / ${esc(r.unitLabel)}`}</td></tr>`).join('')
+        : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No inventory items recorded for this date.</td></tr>'}</tbody>
     </table>`}`;
 
   $('ar-receivables-tbody').innerHTML = state.receivablesList.map((r) => `
