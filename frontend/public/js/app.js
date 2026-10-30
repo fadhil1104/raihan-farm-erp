@@ -53,6 +53,8 @@ let posCart = [];
 let pendingPosSale = null;
 let pendingReceiptRedemptionSaleId = null;
 let activeReceiptPrintSaleId = null;
+let receiptPrintStyle = null;
+let receiptPrintOriginalStyle = null;
 let posIncomePeriod = 'DAY';
 let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
@@ -2164,14 +2166,33 @@ function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
 
 function printSection(elementId) {
   ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
-  $(elementId).classList.add('printable-active');
-  if (elementId === 'receipt-print-area') activeReceiptPrintSaleId = pendingReceiptRedemptionSaleId;
+  const printArea = $(elementId);
+  printArea.classList.add('printable-active');
+  if (elementId === 'receipt-print-area') {
+    activeReceiptPrintSaleId = pendingReceiptRedemptionSaleId;
+    receiptPrintOriginalStyle = printArea.getAttribute('style');
+    printArea.style.cssText = 'position:absolute;left:0;top:0;box-sizing:border-box;width:80mm;max-width:none;padding:3mm;overflow:visible;font:10px/1.35 monospace;';
+    const heightMm = Math.ceil(printArea.getBoundingClientRect().height * 25.4 / 96 + 5);
+    if (receiptPrintOriginalStyle === null) printArea.removeAttribute('style');
+    else printArea.setAttribute('style', receiptPrintOriginalStyle);
+    receiptPrintStyle = document.createElement('style');
+    receiptPrintStyle.media = 'print';
+    receiptPrintStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+    document.head.appendChild(receiptPrintStyle);
+  }
   window.print();
 }
 
 window.addEventListener('afterprint', () => {
   ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area']
     .forEach((id) => $(id).classList.remove('printable-active'));
+  if (receiptPrintStyle) {
+    receiptPrintStyle.remove();
+    receiptPrintStyle = null;
+    if (receiptPrintOriginalStyle === null) $('receipt-print-area').removeAttribute('style');
+    else $('receipt-print-area').setAttribute('style', receiptPrintOriginalStyle);
+    receiptPrintOriginalStyle = null;
+  }
   if (activeReceiptPrintSaleId) {
     const saleId = activeReceiptPrintSaleId;
     activeReceiptPrintSaleId = null;
