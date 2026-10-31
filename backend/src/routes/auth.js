@@ -91,6 +91,36 @@ router.post('/staff', requireAuth, requireAdmin, async (req, res) => {
   res.status(201).json({ staff: staff.toObject() });
 });
 
+router.put('/staff/:staffId', requireAuth, requireAdmin, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isSafeInteger(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: 'Invalid staff ID' });
+  }
+
+  const body = req.body || {};
+  const name = String(body.name || '').trim();
+  const role = String(body.role || '').trim();
+  const pin = String(body.pin || '').trim();
+  const payroll = {};
+  for (const field of ['baseSalary', 'otRate', 'allowance', 'advance']) {
+    const value = Number(body[field]);
+    if (!Number.isFinite(value) || value < 0) {
+      return res.status(400).json({ error: `Enter a valid non-negative ${field}.` });
+    }
+    payroll[field] = value;
+  }
+  if (!name) return res.status(400).json({ error: 'Staff name is required' });
+  if (!role) return res.status(400).json({ error: 'Staff role is required' });
+  if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'PIN must contain exactly 4 digits' });
+
+  const staff = await Staff.findOne({ id: staffId });
+  if (!staff) return res.status(404).json({ error: 'Staff member not found' });
+  Object.assign(staff, { name, role, pin, ...payroll });
+  await staff.save();
+  await User.updateOne({ staffId, role: 'staff' }, { $set: { label: name } });
+  res.json({ staff: staff.toObject() });
+});
+
 // DELETE /api/auth/staff/:staffId -> archive staff and disable their account (admin only)
 router.delete('/staff/:staffId', requireAuth, requireAdmin, async (req, res) => {
   const staffId = Number(req.params.staffId);

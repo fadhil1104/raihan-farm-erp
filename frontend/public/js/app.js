@@ -56,6 +56,7 @@ let pendingReceiptRedemptionSaleId = null;
 let activeReceiptPrintSaleId = null;
 let receiptPrintStyle = null;
 let receiptPrintOriginalStyle = null;
+let editingStaffId = null;
 let inventoryStockAdditions = null;
 let inventoryStockAdditionsDate = '';
 let inventoryStockAdditionsRequestId = 0;
@@ -339,7 +340,7 @@ function printPosSummary() {
 }
 
 // ---------- server sync ----------
-let saveTimer = null, savePending = false, saveInFlight = false, stateVersion = 0;
+let saveTimer = null, savePending = false, saveInFlight = false, salesRefreshInFlight = false, stateVersion = 0;
 
 function setSyncStatus(text, ok = true) {
   const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -421,6 +422,29 @@ async function pullFromServer(notify = false) {
   }
 }
 
+async function refreshPosSales() {
+  if (!currentUser || savePending || saveInFlight || salesRefreshInFlight) return;
+  const versionAtStart = stateVersion;
+  salesRefreshInFlight = true;
+  try {
+    const { sales } = await Api.getPosSales();
+    if (!currentUser || !state || versionAtStart !== stateVersion || savePending || saveInFlight) return;
+    state.posSales = sales;
+    const todaySales = todaysPosSales();
+    $('kpi-pos-sales').innerText = todaySales.length
+      ? `Rs. ${todaySales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0).toLocaleString()}`
+      : '—';
+    $('kpi-pos-count').innerText = todaySales.length ? `${todaySales.length} counter bills today` : 'No sales recorded today';
+    renderPosSalesHistory();
+    setSyncStatus('Sales refreshed from MongoDB');
+  } catch (err) {
+    setSyncStatus('Sales refresh failed', false);
+    console.error('Failed to refresh POS sales:', err);
+  } finally {
+    salesRefreshInFlight = false;
+  }
+}
+
 // Every action ends with saveState(): update vault mirror, re-render, push to server
 function saveState() {
   ensureStateCollections();
@@ -433,7 +457,9 @@ function saveState() {
 setInterval(() => {
   const el = document.activeElement;
   const typing = el && ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName);
-  if (currentUser && !typing && posCart.length === 0) pullFromServer(false);
+  if (!currentUser) return;
+  if (typing || posCart.length > 0) refreshPosSales();
+  else pullFromServer(false);
 }, 20000);
 
 // ---------- Windows app / server settings ----------
@@ -2336,6 +2362,65 @@ function saveManualAttendance() {
 
 function openAddStaffModal() { $('add-staff-modal').classList.toggle('hidden'); }
 
+function openEditStaffModal(staffId) {
+  if (currentUser?.role !== 'admin') return showToast('Only admins can edit staff details.', 'error');
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return showToast('Staff member not found.', 'error');
+  editingStaffId = staffId;
+  $('edit-staff-name').value = staff.name || '';
+  $('edit-staff-role').value = staff.role || '';
+  $('edit-staff-pin').value = staff.pin || '';
+  $('edit-staff-base-salary').value = Number(staff.baseSalary || 0);
+  $('edit-staff-ot-rate').value = Number(staff.otRate || 0);
+  $('edit-staff-allowance').value = Number(staff.allowance || 0);
+  $('edit-staff-advance').value = Number(staff.advance || 0);
+  $('edit-staff-modal').classList.remove('hidden');
+}
+
+function closeEditStaffModal() {
+  editingStaffId = null;
+  $('edit-staff-modal').classList.add('hidden');
+}
+
+async function saveStaffDetails() {
+  if (currentUser?.role !== 'admin' || editingStaffId === null) {
+    return showToast('Only admins can edit staff details.', 'error');
+  }
+  const staff = state.staff.find((member) => member.id === editingStaffId);
+  if (!staff) return showToast('Staff member not found.', 'error');
+  const payrollFields = ['edit-staff-base-salary', 'edit-staff-ot-rate', 'edit-staff-allowance', 'edit-staff-advance'];
+  if (payrollFields.some((id) => $(id).value.trim() === '')) {
+    return showToast('Enter values for all payroll fields.', 'error');
+  }
+  const updated = {
+    name: $('edit-staff-name').value.trim(),
+    role: $('edit-staff-role').value.trim(),
+    pin: $('edit-staff-pin').value.trim(),
+    baseSalary: Number($('edit-staff-base-salary').value),
+    otRate: Number($('edit-staff-ot-rate').value),
+    allowance: Number($('edit-staff-allowance').value),
+    advance: Number($('edit-staff-advance').value)
+  };
+  if (!updated.name || !updated.role || !/^\d{4}$/.test(updated.pin)
+    || Object.values(updated).some((value) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
+    return showToast('Enter a name, role, 4-digit PIN, and valid non-negative payroll amounts.', 'error');
+  }
+
+  const button = $('edit-staff-save');
+  button.disabled = true;
+  try {
+    const result = await Api.updateStaff(editingStaffId, updated);
+    Object.assign(staff, result.staff);
+    closeEditStaffModal();
+    renderAll();
+    showToast(`${staff.name}'s details and payroll settings were updated.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function archiveStaff(staffId) {
   const staff = state.staff.find((entry) => entry.id === staffId);
   if (!staff || !confirm(`Archive ${staff.name}? Their account will be disabled, but their attendance and payroll history will be kept.`)) return;
@@ -2988,7 +3073,10 @@ function renderAll() {
         <td class="py-3 px-3"><input type="number" value="${staff.advance}" onchange="updatePayrollField(${staff.id}, 'advance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold text-red-400"></td>
         <td class="py-3 px-3 text-right font-black text-base text-yellow-400">Rs. ${p.netPay.toLocaleString()}</td>
         <td class="py-3 px-3 text-center"><button onclick="openPayslipModal(${staff.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-print mr-1"></i> Payslip</button></td>
-        <td class="py-3 px-3 text-center"><button onclick="archiveStaff(${staff.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i> Archive</button></td>
+        <td class="py-3 px-3 text-center whitespace-nowrap">
+          ${isAdmin ? `<button onclick="openEditStaffModal(${staff.id})" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>
+          <button onclick="archiveStaff(${staff.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i>Archive</button>` : '—'}
+        </td>
       </tr>`;
   }).join('');
 
@@ -3005,7 +3093,10 @@ function renderAll() {
       <td class="py-3 px-3">${hours.toFixed(1)} hrs</td>
       <td class="py-3 px-3 text-yellow-400">${overtime.toFixed(1)} hrs</td>
       <td class="py-3 px-3">This month: Rs. ${payroll.netPay.toLocaleString()}</td>
-      <td class="py-3 px-3 text-center"><button onclick="restoreStaff(${staff.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i> Restore</button></td>
+      <td class="py-3 px-3 text-center whitespace-nowrap">
+        <button onclick="openEditStaffModal(${staff.id})" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>
+        <button onclick="restoreStaff(${staff.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i>Restore</button>
+      </td>
     </tr>`;
   }).join('');
 

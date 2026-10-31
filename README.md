@@ -110,10 +110,12 @@ The backend and MongoDB API remain independently runnable and deployable.
 | POST | `/api/auth/login` | public | `{username,password}` → JWT |
 | GET | `/api/auth/me` | token | current user |
 | POST | `/api/auth/staff` | admin | Create a staff record and login, or set up a login for existing staff |
+| PUT | `/api/auth/staff/:staffId` | admin | Edit staff identity, attendance PIN, and payroll settings |
 | DELETE | `/api/auth/staff/:staffId` | admin | Archive staff and disable login without deleting payroll or attendance history |
 | PATCH | `/api/auth/staff/:staffId/restore` | admin | Restore archived staff and reactivate their login |
 | PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
+| GET | `/api/state/pos-sales` | token | latest POS sales for background refresh |
 | PUT | `/api/state` | token | sync state changes |
 | PUT | `/api/state?replace=true` | admin | restore a backup |
 | GET | `/api/attendance/roster` | public | names and attendance status for QR |

@@ -94,6 +94,14 @@ router.get('/', requireAuth, async (req, res) => {
   res.json(await buildState(req.user.role));
 });
 
+router.get('/pos-sales', requireAuth, async (req, res) => {
+  const sales = await PosSale.find()
+    .sort({ createdAt: -1, _id: -1 })
+    .select('-_id -__v -uid -seq -createdAt -updatedAt')
+    .lean();
+  res.json({ sales });
+});
+
 // PUT /api/state -> sync app state; staff inventory stock is changed only by stock additions and POS sales.
 // ?replace=true (admin) makes the database exactly match the payload - used by "Restore Backup"
 router.put('/', requireAuth, async (req, res) => {
