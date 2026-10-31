@@ -654,29 +654,56 @@
       <div class="border-b border-slate-800 pb-4">
         <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Raihan Own Farm Supplier</span>
         <h2 class="text-2xl font-black mt-1">Farm Live Intake & Slaughter Wastage Calculator</h2>
-        <p class="text-slate-400 text-sm">Record the live intake and slaughter details once, then add one or more dressed inventory items with their actual weights. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
+        <p class="text-slate-400 text-sm">Record animal intake and pre-slaughter deaths, then record slaughter details separately before adding dressed inventory weights. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
       </div>
       <div class="card-highlight p-5 sm:p-6 space-y-5">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-          <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i> Record New Farm Intake & Slaughter Batch (Auto-Adds to Shop Inventory)</h3>
+          <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i> Record Farm Intake & Slaughter (Auto-Adds Dressed Items to Inventory)</h3>
           <span class="text-xs bg-slate-900 border border-yellow-500/30 px-3 py-1 rounded-lg text-slate-300">Formula: <strong>Expected Dressed = Slaughtered Live Weight × 70%</strong> (30% Waste)</span>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="space-y-3">
           <div>
-            <label class="block text-xs text-slate-400 font-semibold mb-1.5">Number of Live Animals (Count)</label>
-            <input type="number" id="sl-count" min="1" placeholder="Enter count" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            <h4 class="text-sm font-bold text-sky-300">1. Farm Intake</h4>
+            <p class="text-xs text-slate-400">Record the animal type, total animals received, their total live weight, and animals that died before slaughter.</p>
           </div>
-          <div>
-            <label class="block text-xs text-yellow-400 font-bold mb-1.5">Total Live Weight Before Slaughter (kg)</label>
-            <input type="number" step="0.1" id="sl-live-kg" placeholder="Enter live weight" oninput="onLiveWeightInput()" class="w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <label class="block text-xs text-slate-400 font-semibold">Animal type
+              <select id="sl-animal-type" onchange="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+                <option value="Broiler">Broiler</option>
+                <option value="Layer">Layer</option>
+                <option value="Parents">Parents</option>
+              </select>
+            </label>
+            <label class="block text-xs text-slate-400 font-semibold">Number of live animals received (Count)
+              <input type="number" id="sl-count" min="1" step="1" placeholder="Enter count" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            </label>
+            <label class="block text-xs text-yellow-400 font-bold">Total live intake weight (kg)
+              <input type="number" min="0.01" step="0.1" id="sl-live-kg" placeholder="Enter total live weight" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+            </label>
+            <label class="block text-xs text-red-300 font-semibold">Dead animals before slaughter (Count)
+              <input type="number" id="sl-dead-count" min="0" step="1" value="0" placeholder="0" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            </label>
           </div>
+        </div>
+        <div class="space-y-3 border-t border-slate-800 pt-4">
           <div>
-            <label class="block text-xs text-slate-400 font-semibold mb-1.5">Number of Animals Slaughtered (Count)</label>
-            <input type="number" id="sl-slaughter-count" min="1" step="1" placeholder="Enter slaughtered count" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            <h4 class="text-sm font-bold text-yellow-400">2. Slaughter Information</h4>
+            <p class="text-xs text-slate-400">Choose the same animal type as the intake above, then record only animals actually slaughtered after pre-slaughter deaths.</p>
           </div>
-          <div>
-            <label class="block text-xs text-yellow-400 font-bold mb-1.5">Total Live Weight of Slaughtered Animals (kg)</label>
-            <input type="number" min="0.01" step="0.1" id="sl-slaughter-live-kg" placeholder="Enter slaughtered live weight" oninput="onSlaughterWeightInput()" class="w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <label class="block text-xs text-slate-400 font-semibold">Animal type slaughtered
+              <select id="sl-slaughter-animal-type" onchange="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+                <option value="Broiler">Broiler</option>
+                <option value="Layer">Layer</option>
+                <option value="Parents">Parents</option>
+              </select>
+            </label>
+            <label class="block text-xs text-slate-400 font-semibold">Number of animals slaughtered (Count)
+              <input type="number" id="sl-slaughter-count" min="1" step="1" placeholder="Enter slaughtered count" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            </label>
+            <label class="block text-xs text-yellow-400 font-bold">Total live weight of slaughtered animals (kg)
+              <input type="number" min="0.01" step="0.1" id="sl-slaughter-live-kg" placeholder="Enter slaughtered live weight" oninput="onSlaughterWeightInput()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+            </label>
           </div>
         </div>
         <div class="space-y-3">
@@ -709,7 +736,7 @@
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-              <th class="py-3 px-3">Date & Batch</th><th class="py-3 px-3">Farm Source & Animal</th><th class="py-3 px-3">Live Intake Count</th><th class="py-3 px-3">Live Intake Weight</th><th class="py-3 px-3">Slaughtered Count</th><th class="py-3 px-3">Slaughtered Live Weight</th><th class="py-3 px-3">Expected (70%)</th><th class="py-3 px-3">Actual Dressed Wt</th><th class="py-3 px-3">Actual Wastage</th><th class="py-3 px-3">Yield Status</th><th class="py-3 px-3 admin-only-nav">Admin</th>
+              <th class="py-3 px-3">Date & Batch</th><th class="py-3 px-3">Farm Source & Animal</th><th class="py-3 px-3">Live Intake Count</th><th class="py-3 px-3">Live Intake Weight</th><th class="py-3 px-3">Dead Before Slaughter</th><th class="py-3 px-3">Slaughtered Animal</th><th class="py-3 px-3">Slaughtered Count</th><th class="py-3 px-3">Slaughtered Live Weight</th><th class="py-3 px-3">Expected (70%)</th><th class="py-3 px-3">Actual Dressed Wt</th><th class="py-3 px-3">Actual Wastage</th><th class="py-3 px-3">Yield Status</th><th class="py-3 px-3 admin-only-nav">Admin</th>
             </tr>
           </thead>
           <tbody id="slaughter-tbody" class="divide-y divide-slate-800"></tbody>
@@ -976,7 +1003,7 @@
             <div><h3 class="text-lg font-black text-white">Choose a print view</h3><p class="mt-1 text-xs text-slate-400">Select a customer/product summary or the full transaction detail.</p></div>
             <button type="button" onclick="closePosPrintOptions()" class="text-slate-400 hover:text-white" aria-label="Close print options"><i class="fa-solid fa-xmark"></i></button>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button type="button" onclick="printPosSummary()" class="rounded-xl bg-yellow-400 p-4 text-left font-black text-slate-950 hover:bg-yellow-300"><i class="fa-solid fa-chart-pie mr-2"></i>Summary view<span class="mt-1 block text-xs font-medium">Walk-in, loyalty, totals & products</span></button>
             <button type="button" onclick="printPosDetailed()" class="rounded-xl bg-slate-800 p-4 text-left font-black text-white hover:bg-slate-700"><i class="fa-solid fa-list mr-2"></i>Detailed view<span class="mt-1 block text-xs font-medium text-slate-300">Full transaction list and items</span></button>
           </div>
@@ -1265,8 +1292,11 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><label class="block text-xs text-slate-400 mb-1">Date</label><input type="datetime-local" id="edit-batch-date" class="w-full px-3 py-2 rounded-lg text-sm"></div>
         <div><label class="block text-xs text-slate-400 mb-1">Farm / Supplier Source</label><input type="text" id="edit-batch-source" class="w-full px-3 py-2 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-slate-400 mb-1">Intake Animal Type</label><select id="edit-batch-animal-type" class="w-full px-3 py-2 rounded-lg text-sm"><option value="Broiler">Broiler</option><option value="Layer">Layer</option><option value="Parents">Parents</option></select></div>
         <div><label class="block text-xs text-slate-400 mb-1">Animal Count (whole number)</label><input type="number" min="1" step="1" id="edit-batch-count" class="w-full px-3 py-2 rounded-lg text-sm"></div>
         <div><label class="block text-xs text-slate-400 mb-1">Live Weight (kg)</label><input type="number" min="0.01" step="0.01" id="edit-batch-live" class="w-full px-3 py-2 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-red-300 mb-1">Dead Animals Before Slaughter</label><input type="number" min="0" step="1" id="edit-batch-dead-count" class="w-full px-3 py-2 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-slate-400 mb-1">Slaughter Animal Type</label><select id="edit-batch-slaughter-animal-type" class="w-full px-3 py-2 rounded-lg text-sm"><option value="Broiler">Broiler</option><option value="Layer">Layer</option><option value="Parents">Parents</option></select></div>
         <div><label class="block text-xs text-slate-400 mb-1">Slaughtered Animal Count</label><input type="number" min="1" step="1" id="edit-batch-slaughter-count" class="w-full px-3 py-2 rounded-lg text-sm"></div>
         <div><label class="block text-xs text-slate-400 mb-1">Slaughtered Animals' Live Weight (kg)</label><input type="number" min="0.01" step="0.01" id="edit-batch-slaughter-live" class="w-full px-3 py-2 rounded-lg text-sm"></div>
       </div>
