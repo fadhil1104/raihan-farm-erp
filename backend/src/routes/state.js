@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { collections, DailyVault, InventoryItem, CashierEntry, PosSale } = require('../models');
+const { collections, DailyVault, InventoryItem, CashierEntry, PosSale, Customer, Receivable } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { randomUUID } = require('node:crypto');
 
@@ -47,25 +47,10 @@ async function syncCollection(c, items, replace) {
 async function deductSoldInventory(sales) {
   const quantities = new Map();
   sales.forEach((sale) => {
-    if (Array.isArray(sale.itemsDetails)) {
-      sale.itemsDetails.forEach((detail) => {
-        const id = String(detail.id || '');
-        const field = detail.unitType === 'kg' ? 'stockKg' : 'stockQuantity';
-        const quantity = Number(detail.quantity);
-        if (id && Number.isFinite(quantity) && quantity > 0) {
-          if (!quantities.has(id)) quantities.set(id, { field, quantity: 0 });
-          quantities.get(id).quantity += quantity;
-        }
-      });
-    } else {
-      Object.entries(sale.itemsBreakdown || {}).forEach(([id, quantity]) => {
-        const amount = Number(quantity);
-        if (Number.isFinite(amount) && amount > 0) {
-          if (!quantities.has(id)) quantities.set(id, { field: 'stockKg', quantity: 0 });
-          quantities.get(id).quantity += amount;
-        }
-      });
-    }
+    getSaleInventoryQuantities(sale).forEach(({ field, quantity }, id) => {
+      if (!quantities.has(id)) quantities.set(id, { field, quantity: 0 });
+      quantities.get(id).quantity += quantity;
+    });
   });
 
   if (!quantities.size) return;
@@ -73,6 +58,35 @@ async function deductSoldInventory(sales) {
     updateOne: { filter: { id }, update: { $inc: { [field]: -quantity } } }
   }));
   await InventoryItem.bulkWrite(ops);
+}
+
+function getSaleInventoryQuantities(sale) {
+  const quantities = new Map();
+  if (Array.isArray(sale.itemsDetails)) {
+    sale.itemsDetails.forEach((detail) => {
+      const id = String(detail.id || '');
+      const field = detail.unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+      const quantity = Number(detail.quantity);
+      if (id && Number.isFinite(quantity) && quantity > 0) {
+        if (!quantities.has(id)) quantities.set(id, { field, quantity: 0 });
+        quantities.get(id).quantity += quantity;
+      }
+    });
+  } else {
+    Object.entries(sale.itemsBreakdown || {}).forEach(([id, quantity]) => {
+      const amount = Number(quantity);
+      if (Number.isFinite(amount) && amount > 0) {
+        if (!quantities.has(id)) quantities.set(id, { field: 'stockKg', quantity: 0 });
+        quantities.get(id).quantity += amount;
+      }
+    });
+  }
+  return quantities;
+}
+
+function phoneKey(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
 }
 
 // GET /api/state -> whole app state (same shape the old localStorage object had)
@@ -181,6 +195,95 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
 router.delete('/cashier-entries', requireAuth, requireAdmin, async (req, res) => {
   const result = await CashierEntry.deleteMany({});
   res.json({ ok: true, deletedCount: result.deletedCount });
+});
+
+router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
+  const sale = await PosSale.findOne({ id: req.params.id });
+  if (!sale) return res.status(404).json({ error: 'POS sale not found' });
+
+  const quantities = getSaleInventoryQuantities(sale);
+  const itemIds = [...quantities.keys()];
+  if (itemIds.length) {
+    const inventory = await InventoryItem.find({ id: { $in: itemIds } }).select('id').lean();
+    if (inventory.length !== itemIds.length) {
+      return res.status(409).json({ error: 'Cannot delete this sale because a sold inventory item no longer exists.' });
+    }
+
+    await InventoryItem.bulkWrite([...quantities].map(([id, { field, quantity }]) => ({
+      updateOne: { filter: { id }, update: { $inc: { [field]: quantity } } }
+    })));
+  }
+
+  try {
+    const deletedSale = await PosSale.findOneAndDelete({ _id: sale._id });
+    if (!deletedSale) {
+      if (itemIds.length) {
+        await InventoryItem.bulkWrite([...quantities].map(([id, { field, quantity }]) => ({
+          updateOne: { filter: { id }, update: { $inc: { [field]: -quantity } } }
+        })));
+      }
+      return res.status(404).json({ error: 'POS sale was already removed' });
+    }
+  } catch (error) {
+    if (itemIds.length) {
+      try {
+        await InventoryItem.bulkWrite([...quantities].map(([id, { field, quantity }]) => ({
+          updateOne: { filter: { id }, update: { $inc: { [field]: -quantity } } }
+        })));
+      } catch (rollbackError) {
+        console.error('Failed to roll back inventory after POS sale deletion failed:', rollbackError);
+        throw Object.assign(new Error('Sale deletion failed and inventory rollback could not be completed.'), { status: 500 });
+      }
+    }
+    throw error;
+  }
+
+  await Receivable.deleteOne({ id: sale.id });
+
+  const salePhone = phoneKey(sale.customerPhone);
+  if (salePhone) {
+    const customers = await Customer.find().lean();
+    const customer = customers.find((entry) => phoneKey(entry.phone) === salePhone);
+    if (customer) {
+      const remainingSales = await PosSale.find().select('date time customerPhone').lean();
+      const customerSales = remainingSales
+        .filter((entry) => phoneKey(entry.customerPhone) === salePhone)
+        .sort((a, b) => `${b.date || ''} ${b.time || ''}`.localeCompare(`${a.date || ''} ${a.time || ''}`));
+      const loyaltyAdjustment = Number(sale.loyaltyPointsEarned || 0)
+        - (sale.loyaltyRedemptionPrinted ? Number(sale.loyaltyPointsRedeemed || 0) : 0);
+      await Customer.updateOne(
+        { _id: customer._id },
+        {
+          $set: {
+            lastVisit: customerSales[0]?.date || '',
+            visitCount: Math.max(0, Number(customer.visitCount || 0) - 1),
+            totalSpent: Math.max(0, Number(customer.totalSpent || 0) - Number(sale.totalRs || 0)),
+            loyaltyPoints: Math.max(0, Number(customer.loyaltyPoints || 0) - loyaltyAdjustment)
+          }
+        }
+      );
+    }
+  }
+
+  const vault = await DailyVault.findOne({ uid: sale.date });
+  if (vault) {
+    vault.posSales = (vault.posSales || []).filter((entry) => String(entry.id) !== String(sale.id));
+    (vault.inventorySnapshot || []).forEach((row) => {
+      const sold = quantities.get(String(row.id));
+      if (!sold) return;
+      const oldSoldStock = Number(row.soldStock ?? row.soldKg ?? 0);
+      const oldClosingStock = Number(row.closingStock ?? row.closingKg ?? 0);
+      row.soldStock = Math.max(0, oldSoldStock - sold.quantity);
+      row.closingStock = oldClosingStock + sold.quantity;
+      if (sold.field === 'stockKg') {
+        row.soldKg = Math.max(0, Number(row.soldKg ?? oldSoldStock) - sold.quantity);
+        row.closingKg = Number(row.closingKg ?? oldClosingStock) + sold.quantity;
+      }
+    });
+    await vault.save();
+  }
+
+  res.json({ ok: true, deletedSale: clean(sale.toObject()), restoredInventoryItems: itemIds.length });
 });
 
 router.post('/inventory/:id/stock', requireAuth, async (req, res) => {

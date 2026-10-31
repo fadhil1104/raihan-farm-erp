@@ -148,6 +148,7 @@ function renderPosSalesHistory() {
   $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
   $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
 
+  const canDeleteSales = currentUser?.role === 'admin';
   const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
     : posIncomePeriod === 'DATE' ? `Sales for ${posIncomeDate}`
     : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
@@ -156,7 +157,7 @@ function renderPosSalesHistory() {
   $('pos-income-period-label').innerText = `${periodLabel} — Total Collected`;
   $('pos-history-heading').innerText = `${periodLabel} — Completed POS Transactions`;
   $('pos-history-tbody').innerHTML = sales.length === 0
-    ? `<tr><td colspan="6" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
+    ? `<tr><td colspan="${canDeleteSales ? 7 : 6}" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
     : sales.map((p) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
@@ -165,8 +166,31 @@ function renderPosSalesHistory() {
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
       <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
       <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
+      ${canDeleteSales ? `<td data-label="Actions" class="text-right"><button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button></td>` : ''}
     </tr>`).join('');
   renderCashierDrawer();
+}
+
+async function deletePosSale(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can delete POS sales.', 'error');
+  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
+  if (!sale) return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+  if (!confirm(`Delete sale ${sale.id} from ${sale.date}?\n\nThis cannot be undone. Sold stock will be restored and linked credit/customer totals will be updated.`)) return;
+
+  try {
+    await flushNow();
+    if (savePending || saveInFlight) {
+      throw new Error('Pending changes could not be saved. Wait for synchronization before deleting this sale.');
+    }
+    await Api.deletePosSale(sale.id);
+    state = await Api.getState();
+    ensureStateCollections();
+    renderAll();
+    setSyncStatus('Synced from MongoDB');
+    showToast(`Sale ${sale.id} deleted and its stock restored.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function posSaleItemsHtml(sale) {

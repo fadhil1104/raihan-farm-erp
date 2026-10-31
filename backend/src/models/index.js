@@ -116,7 +116,10 @@ const collections = [
  *  insertOnly - existing records are never modified/overwritten by a sync (sales and logs are immutable once saved)
  *  protect    - fields that a sync may only set when a record is first created
  *  sortNewest - returned newest first (otherwise in saved order via `seq`)
- * A normal sync only inserts/updates; records are deleted only by an admin restore (PUT /api/state?replace=true).
+ * A normal sync only inserts/updates; POS sales may also be removed through their admin-only route.
+ * Other records are deleted only by an admin restore (PUT /api/state?replace=true).
  */
 
-module.exports = { collections, DailyVault, InventoryItem, Employee, AttendanceLog, PosSale, CashierEntry, Customer };
+module.exports = {
+  collections, DailyVault, InventoryItem, Employee, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
+};
