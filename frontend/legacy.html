@@ -110,7 +110,7 @@
           <div class="flex justify-between"><span class="font-bold text-slate-600">Workplace Location:</span><span class="font-black text-slate-900">Mannar Road, Puttalam — Main Counter</span></div>
           <div class="flex justify-between"><span class="font-bold text-slate-600">Wall Check-In Code:</span><span class="font-mono font-black text-slate-900">RAIHAN-WALL-01</span></div>
         </div>
-        <p class="text-[11px] text-slate-500 font-semibold pt-1">Stick this laminated sheet near the shop entrance or butcher counter. Each employee uses their personal PIN (do not print PINs on the poster).</p>
+        <p class="text-[11px] text-slate-500 font-semibold pt-1">Stick this laminated sheet near the shop entrance or butcher counter. Each staff member uses their personal PIN (do not print PINs on the poster).</p>
       </div>
       <div class="bg-slate-950 px-6 py-4 flex flex-wrap justify-between items-center gap-2 border-t border-slate-800 no-print">
         <button onclick="openMobileQrPortal()" class="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition flex items-center gap-1.5"><i class="fa-solid fa-mobile-screen-button"></i> Simulate Mobile Scan</button>
@@ -140,7 +140,7 @@
         </div>
         <div>
           <label class="block text-xs font-extrabold uppercase tracking-wider text-yellow-400 mb-1.5">1. Select Your Name</label>
-          <select id="mob-qr-emp-select" onchange="updateMobileQrEmpStatus()" class="w-full px-3.5 py-3 rounded-xl text-sm font-bold"></select>
+          <select id="mob-qr-staff-select" onchange="updateMobileQrStaffStatus()" class="w-full px-3.5 py-3 rounded-xl text-sm font-bold"></select>
         </div>
         <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
           <span class="text-slate-400">Current Status:</span>
@@ -309,7 +309,7 @@
         <div class="flex justify-between items-start border-b border-slate-700 pb-4">
           <div class="flex items-center gap-3">
             <div class="bg-yellow-400 p-2.5 rounded-xl text-slate-950"><i class="fa-solid fa-wheat-awn text-xl"></i></div>
-            <div><h3 class="font-black text-lg tracking-wide text-yellow-400">RAIHAN FARM SHOP</h3><p class="text-xs text-slate-400">Official Month-End Employee Payslip</p></div>
+            <div><h3 class="font-black text-lg tracking-wide text-yellow-400">RAIHAN FARM SHOP</h3><p class="text-xs text-slate-400">Official Month-End Staff Payslip</p></div>
           </div>
           <div class="text-right">
             <span class="text-xs uppercase px-2.5 py-1 rounded-full bg-yellow-400/20 text-yellow-300 font-bold" id="ps-month"></span>
@@ -317,7 +317,7 @@
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3 bg-slate-800/70 p-3.5 rounded-xl border border-slate-700/80 text-sm">
-          <div><p class="text-xs text-slate-400">Employee Name</p><p class="font-bold text-base text-white" id="ps-name">-</p></div>
+          <div><p class="text-xs text-slate-400">Staff Name</p><p class="font-bold text-base text-white" id="ps-name">-</p></div>
           <div><p class="text-xs text-slate-400">Designation / Role</p><p class="font-semibold text-yellow-400" id="ps-role">-</p></div>
           <div><p class="text-xs text-slate-400">Logged Shifts</p><p class="font-semibold" id="ps-shifts">0 Shifts</p></div>
           <div><p class="text-xs text-slate-400">Total Overtime</p><p class="font-semibold text-emerald-400" id="ps-ot-hours">0 hrs</p></div>
@@ -332,7 +332,7 @@
           <div><p class="text-xs uppercase tracking-wider text-yellow-300 font-bold">Net Take-Home Salary</p><p class="text-[11px] text-slate-400">Approved for Month-End Payout</p></div>
           <div class="text-2xl font-black text-yellow-400" id="ps-net">Rs. 0</div>
         </div>
-        <div class="pt-4 flex justify-between text-xs text-slate-500 border-t border-slate-800"><span>Raihan Farm Admin: ___________________</span><span>Employee Sign: ___________________</span></div>
+        <div class="pt-4 flex justify-between text-xs text-slate-500 border-t border-slate-800"><span>Raihan Farm Admin: ___________________</span><span>Staff Sign: ___________________</span></div>
       </div>
       <div class="bg-slate-950 px-6 py-4 flex justify-end gap-3 border-t border-slate-800 no-print">
         <button onclick="closePayslipModal()" class="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition">Close</button>
@@ -1060,7 +1060,7 @@
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
           <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Wall QR & Kiosk Attendance</span>
-          <h2 class="text-2xl font-black mt-1">Employee Sign-In / Sign-Out & Wall QR System</h2>
+          <h2 class="text-2xl font-black mt-1">Staff Sign-In / Sign-Out & Wall QR System</h2>
           <p class="text-slate-400 text-sm">Print the Wall QR Poster and stick it in the shop. Staff simply scan the QR on their phone to clock in and out.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -1085,19 +1085,19 @@
       <div class="card p-5 space-y-4">
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
           <div>
-            <h3 class="font-bold text-lg flex items-center gap-2"><i class="fa-solid fa-user-check text-yellow-400"></i> Attendance History (Employee-by-Employee Filter)</h3>
+            <h3 class="font-bold text-lg flex items-center gap-2"><i class="fa-solid fa-user-check text-yellow-400"></i> Attendance History (Staff Filter)</h3>
             <p class="text-xs text-slate-400">Inspect individual shift records, sign-in/out timestamps, and overtime hours.</p>
           </div>
           <div class="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            <label class="text-xs text-slate-400 font-semibold">Filter Employee:</label>
-            <select id="filter-emp-logs" onchange="renderAttendanceLogs()" class="px-3.5 py-2 rounded-xl text-sm font-semibold min-w-[200px]"><option value="ALL">All Employees</option></select>
+            <label class="text-xs text-slate-400 font-semibold">Filter Staff:</label>
+            <select id="filter-staff-logs" onchange="renderAttendanceLogs()" class="px-3.5 py-2 rounded-xl text-sm font-semibold min-w-[200px]"><option value="ALL">All Staff</option></select>
             <button onclick="toggleManualLogForm()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3.5 py-2 rounded-xl text-xs font-extrabold transition"><i class="fa-solid fa-plus mr-1"></i> Log Manual Shift</button>
           </div>
         </div>
         <div id="manual-log-form" class="hidden bg-slate-900 p-4 rounded-xl border border-yellow-500/30 space-y-3">
           <h4 class="text-xs font-bold uppercase tracking-wider text-yellow-400">Add Manual Shift / Overtime Record</h4>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-            <select id="man-emp" class="px-3 py-2 rounded-lg text-sm"></select>
+            <select id="man-staff" class="px-3 py-2 rounded-lg text-sm"></select>
             <input type="date" id="man-date" class="px-3 py-2 rounded-lg text-sm">
             <input type="text" id="man-in" placeholder="Sign-in time" class="px-3 py-2 rounded-lg text-sm">
             <input type="text" id="man-out" placeholder="Sign-out time" class="px-3 py-2 rounded-lg text-sm">
@@ -1105,12 +1105,12 @@
             <button onclick="saveManualAttendance()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold rounded-lg px-4 py-2 text-sm transition">Save Shift</button>
           </div>
         </div>
-        <div id="filtered-emp-banner" class="hidden bg-slate-900/90 border border-yellow-500/30 rounded-xl p-4 flex flex-wrap justify-between items-center gap-4"></div>
+        <div id="filtered-staff-banner" class="hidden bg-slate-900/90 border border-yellow-500/30 rounded-xl p-4 flex flex-wrap justify-between items-center gap-4"></div>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse text-sm">
             <thead>
               <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-                <th class="py-3 px-4">Date</th><th class="py-3 px-4">Employee</th><th class="py-3 px-4">Designation</th><th class="py-3 px-4">Sign In</th><th class="py-3 px-4">Sign Out</th><th class="py-3 px-4">Total Hours</th><th class="py-3 px-4">Overtime (Hrs)</th><th class="py-3 px-4">Action</th>
+                <th class="py-3 px-4">Date</th><th class="py-3 px-4">Staff</th><th class="py-3 px-4">Designation</th><th class="py-3 px-4">Sign In</th><th class="py-3 px-4">Sign Out</th><th class="py-3 px-4">Total Hours</th><th class="py-3 px-4">Overtime (Hrs)</th><th class="py-3 px-4">Action</th>
               </tr>
             </thead>
             <tbody id="attendance-log-tbody" class="divide-y divide-slate-800/80"></tbody>
@@ -1126,7 +1126,7 @@
           <h2 class="text-2xl font-black">Month-End Salary, Allowances & Advances</h2>
           <p class="text-slate-400 text-sm">Auto-calculates shifts worked, overtime hours, allowances (food, fuel, slaughter bonus), and deducts cash advances.</p>
         </div>
-        <button onclick="openAddEmployeeModal()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2.5 rounded-xl text-xs font-extrabold transition shadow-lg shadow-yellow-400/20"><i class="fa-solid fa-user-plus mr-1.5"></i> Add New Staff Member</button>
+        <button onclick="openAddStaffModal()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2.5 rounded-xl text-xs font-extrabold transition shadow-lg shadow-yellow-400/20"><i class="fa-solid fa-user-plus mr-1.5"></i> Add New Staff Member</button>
       </div>
       <div id="archived-staff-reports" class="hidden card p-5 space-y-3">
         <div>
@@ -1136,20 +1136,20 @@
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse text-sm">
             <thead><tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-              <th class="py-3 px-3">Employee</th><th class="py-3 px-3">Archived</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Total Hours</th><th class="py-3 px-3">Overtime</th><th class="py-3 px-3">Historical Payroll</th><th class="py-3 px-3">Access</th>
+              <th class="py-3 px-3">Staff</th><th class="py-3 px-3">Archived</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Total Hours</th><th class="py-3 px-3">Overtime</th><th class="py-3 px-3">Historical Payroll</th><th class="py-3 px-3">Access</th>
             </tr></thead>
             <tbody id="archived-staff-tbody" class="divide-y divide-slate-800"></tbody>
           </table>
         </div>
       </div>
-      <div id="add-emp-modal" class="card-highlight p-5 hidden space-y-3">
+      <div id="add-staff-modal" class="card-highlight p-5 hidden space-y-3">
         <div class="flex justify-between items-center">
-          <h4 class="font-bold text-sm uppercase text-yellow-400"><i class="fa-solid fa-id-badge mr-1"></i> Register New Raihan Farm Shop Employee</h4>
-          <button onclick="openAddEmployeeModal()" class="text-xs text-slate-400 hover:text-white">Close</button>
+          <h4 class="font-bold text-sm uppercase text-yellow-400"><i class="fa-solid fa-id-badge mr-1"></i> Register New Raihan Farm Shop Staff Member</h4>
+          <button onclick="openAddStaffModal()" class="text-xs text-slate-400 hover:text-white">Close</button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <input type="text" id="new-emp-name" placeholder="Full Name" autocomplete="name" class="px-3 py-2 rounded-lg text-sm">
-          <select id="new-emp-role" class="px-3 py-2 rounded-lg text-sm">
+          <input type="text" id="new-staff-name" placeholder="Full Name" autocomplete="name" class="px-3 py-2 rounded-lg text-sm">
+          <select id="new-staff-role" class="px-3 py-2 rounded-lg text-sm">
             <option value="Slaughter & Dressing Lead">Slaughter & Dressing Lead</option>
             <option value="Head Butcher">Head Butcher</option>
             <option value="POS Cashier & Packer">POS Cashier & Packer</option>
@@ -1158,22 +1158,22 @@
             <option value="Manager">Manager</option>
             <option value="Supervisor">Supervisor</option>
           </select>
-          <input type="tel" id="new-emp-phone" placeholder="Phone number (staff login)" autocomplete="tel" class="px-3 py-2 rounded-lg text-sm">
-          <input type="password" id="new-emp-password" placeholder="Staff password (8+ characters)" minlength="8" autocomplete="new-password" class="px-3 py-2 rounded-lg text-sm">
-          <input type="number" id="new-emp-base" placeholder="Monthly Base (Rs.)" class="px-3 py-2 rounded-lg text-sm">
-          <input type="number" id="new-emp-otrate" placeholder="OT Rate/Hr (Rs.)" class="px-3 py-2 rounded-lg text-sm">
-          <input type="number" id="new-emp-allowance" placeholder="Allowances (Rs.)" class="px-3 py-2 rounded-lg text-sm">
-          <button onclick="saveNewEmployee()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-lg px-4 py-2 text-sm font-black transition">Create Staff Account</button>
+          <input type="tel" id="new-staff-phone" placeholder="Phone number (staff login)" autocomplete="tel" class="px-3 py-2 rounded-lg text-sm">
+          <input type="password" id="new-staff-password" placeholder="Staff password (8+ characters)" minlength="8" autocomplete="new-password" class="px-3 py-2 rounded-lg text-sm">
+          <input type="number" id="new-staff-base" placeholder="Monthly Base (Rs.)" class="px-3 py-2 rounded-lg text-sm">
+          <input type="number" id="new-staff-otrate" placeholder="OT Rate/Hr (Rs.)" class="px-3 py-2 rounded-lg text-sm">
+          <input type="number" id="new-staff-allowance" placeholder="Allowances (Rs.)" class="px-3 py-2 rounded-lg text-sm">
+          <button onclick="saveNewStaff()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-lg px-4 py-2 text-sm font-black transition">Create Staff Account</button>
         </div>
       </div>
       <div class="card p-5 overflow-x-auto">
         <div class="mb-5 rounded-xl border border-slate-700 bg-slate-900/70 p-4 space-y-3">
           <div>
             <h3 class="font-bold text-sm text-yellow-400">Set Up Login for Existing Staff</h3>
-            <p class="mt-1 text-xs text-slate-400">Give an existing employee a phone number and password so they can update their own name, phone, and password.</p>
+            <p class="mt-1 text-xs text-slate-400">Give an existing staff member a phone number and password so they can update their own name, phone, and password.</p>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <select id="existing-staff-account-employee" class="px-3 py-2 rounded-lg text-sm"></select>
+            <select id="existing-staff-account-select" class="px-3 py-2 rounded-lg text-sm"></select>
             <input type="tel" id="existing-staff-account-phone" placeholder="Phone number (staff login)" autocomplete="tel" class="px-3 py-2 rounded-lg text-sm">
             <input type="password" id="existing-staff-account-password" placeholder="Temporary password (8+ characters)" minlength="8" autocomplete="new-password" class="px-3 py-2 rounded-lg text-sm">
             <button onclick="createExistingStaffAccount()" class="bg-slate-700 hover:bg-slate-600 text-white rounded-lg px-4 py-2 text-sm font-bold transition">Create Staff Login</button>
@@ -1182,7 +1182,7 @@
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
-              <th class="py-3 px-3">Employee & Role</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Base Salary</th><th class="py-3 px-3">OT Hours</th><th class="py-3 px-3">OT Pay</th><th class="py-3 px-3">Allowances (Rs.)</th><th class="py-3 px-3">Advances (Rs.)</th><th class="py-3 px-3 text-right">Net Month-End Salary</th><th class="py-3 px-3 text-center">Payslip</th><th class="py-3 px-3 text-center">Staff Access</th>
+              <th class="py-3 px-3">Staff & Role</th><th class="py-3 px-3">Shifts</th><th class="py-3 px-3">Base Salary</th><th class="py-3 px-3">OT Hours</th><th class="py-3 px-3">OT Pay</th><th class="py-3 px-3">Allowances (Rs.)</th><th class="py-3 px-3">Advances (Rs.)</th><th class="py-3 px-3 text-right">Net Month-End Salary</th><th class="py-3 px-3 text-center">Payslip</th><th class="py-3 px-3 text-center">Staff Access</th>
             </tr>
           </thead>
           <tbody id="payroll-tbody" class="divide-y divide-slate-800"></tbody>

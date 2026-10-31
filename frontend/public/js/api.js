@@ -32,10 +32,10 @@ const Api = (() => {
     clearToken: () => localStorage.removeItem(TOKEN_KEY),
     onUnauthorized: (fn) => { onUnauthorized = fn; },
     login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password }, auth: false }),
-    createStaff: (employee, phone, password) => request('/auth/staff', { method: 'POST', body: { employee, phone, password } }),
-    createStaffAccount: (employeeId, phone, password) => request('/auth/staff', { method: 'POST', body: { employeeId, phone, password } }),
-    archiveStaff: (employeeId) => request('/auth/staff/' + encodeURIComponent(employeeId), { method: 'DELETE' }),
-    restoreStaff: (employeeId) => request('/auth/staff/' + encodeURIComponent(employeeId) + '/restore', { method: 'PATCH' }),
+    createStaff: (staff, phone, password) => request('/auth/staff', { method: 'POST', body: { staff, phone, password } }),
+    createStaffAccount: (staffId, phone, password) => request('/auth/staff', { method: 'POST', body: { staffId, phone, password } }),
+    archiveStaff: (staffId) => request('/auth/staff/' + encodeURIComponent(staffId), { method: 'DELETE' }),
+    restoreStaff: (staffId) => request('/auth/staff/' + encodeURIComponent(staffId) + '/restore', { method: 'PATCH' }),
     updateStaffProfile: (profile, tokenOverride) => request('/auth/me', { method: 'PUT', body: profile, tokenOverride }),
     me: () => request('/auth/me'),
     getState: () => request('/state'),
@@ -46,8 +46,8 @@ const Api = (() => {
     addInventoryStock: (itemId, quantity) => request('/state/inventory/' + encodeURIComponent(itemId) + '/stock', { method: 'POST', body: { quantity } }),
     getInventoryStockAdditions: (date) => request('/state/inventory/stock-additions?date=' + encodeURIComponent(date)),
     roster: () => request('/attendance/roster', { auth: false }),
-    qrClock: (empId, pin) => request('/attendance/qr-clock', { method: 'POST', body: { empId, pin }, auth: false }),
-    kioskClock: (empId) => request('/attendance/clock', { method: 'POST', body: { empId } }),
-    manualSignOut: (empId) => request('/attendance/manual-sign-out', { method: 'POST', body: { empId } })
+    qrClock: (staffId, pin) => request('/attendance/qr-clock', { method: 'POST', body: { staffId, pin }, auth: false }),
+    kioskClock: (staffId) => request('/attendance/clock', { method: 'POST', body: { staffId } }),
+    manualSignOut: (staffId) => request('/attendance/manual-sign-out', { method: 'POST', body: { staffId } })
   };
 })();

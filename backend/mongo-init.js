@@ -9,7 +9,7 @@ const database = db.getSiblingDB(dbName);
 
 const collections = [
   'users', 'inventoryitems', 'inventoryapprovals', 'customers', 'slaughterbatches', 'possales',
-  'receivables', 'monthlyhistories', 'weeklyhistories', 'employees', 'attendancelogs',
+  'receivables', 'monthlyhistories', 'weeklyhistories', 'staffs', 'attendancelogs',
   'deliveries', 'subscriptions', 'dailyvaults'
 ];
 
@@ -25,7 +25,7 @@ collections.filter((c) => c !== 'users').forEach((name) => {
 // Handy query indexes
 database.possales.createIndex({ date: 1 });
 database.slaughterbatches.createIndex({ date: 1 });
-database.attendancelogs.createIndex({ empId: 1, date: 1 });
+database.attendancelogs.createIndex({ staffId: 1, date: 1 });
 database.receivables.createIndex({ status: 1 });
 database.dailyvaults.createIndex({ date: 1 }, { unique: true });
 

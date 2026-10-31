@@ -14,7 +14,7 @@ async function buildState(role) {
   const state = Object.fromEntries(entries);
   if (role !== 'admin') {
     // Staff never receives PINs, payroll or attendance
-    state.employees = state.employees.filter((employee) => !employee.archivedAt)
+    state.staff = state.staff.filter((member) => !member.archivedAt)
       .map(({ pin, phone, archivedAt, baseSalary, otRate, allowance, advance, ...rest }) =>
       ({ ...rest, baseSalary: 0, otRate: 0, allowance: 0, advance: 0 }));
     state.attendanceLogs = [];
@@ -104,9 +104,16 @@ router.put('/', requireAuth, async (req, res) => {
   for (const c of collections) {
     if (c.adminOnly && !isAdmin) continue;
     if (c.key === 'cashierEntries' && !replace) continue;
-    if (!Array.isArray(body[c.key])) continue;
     if (c.key === 'inventory' && !isAdmin) continue;
-    const items = body[c.key].filter((x) => x && x[c.keyField] !== undefined && x[c.keyField] !== null);
+    const records = c.key === 'staff' ? (body.staff ?? body.employees) : body[c.key];
+    if (!Array.isArray(records)) continue;
+    const items = records
+      .filter((x) => x && x[c.keyField] !== undefined && x[c.keyField] !== null)
+      .map((item) => {
+        if (c.key !== 'attendanceLogs' || item.staffId !== undefined || item.empId === undefined) return item;
+        const { empId, ...rest } = item;
+        return { ...rest, staffId: empId };
+      });
     const result = await syncCollection(c, items, replace);
     if (!isAdmin && c.key === 'posSales' && result?.upsertedIds) {
       Object.keys(result.upsertedIds).forEach((index) => {

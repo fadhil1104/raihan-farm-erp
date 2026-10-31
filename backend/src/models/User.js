@@ -6,7 +6,7 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['admin', 'staff'], required: true },
     label: { type: String, default: '' },
-    employeeId: { type: Number, unique: true, sparse: true },
+    staffId: { type: Number, unique: true, sparse: true },
     isActive: { type: Boolean, default: true }
   },
   { timestamps: true }

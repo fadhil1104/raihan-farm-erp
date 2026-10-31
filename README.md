@@ -43,7 +43,9 @@ Root convenience scripts are also available: `npm run dev:backend`,
 
 On first backend start, only the admin account from `ADMIN_USERNAME` and
 `ADMIN_PASSWORD` is created. Passwords are stored as bcrypt hashes. Existing MongoDB
-records are not automatically deleted.
+records are not automatically deleted, except that existing employee records and
+their user/attendance references are migrated to staff and the legacy `employees`
+collection is dropped on backend startup.
 
 ## Docker
 
@@ -98,7 +100,7 @@ The backend and MongoDB API remain independently runnable and deployable.
 
 * The frontend loads application data from `GET /api/state` after login and saves
   changes (debounced) with `PUT /api/state`. Business data is stored in MongoDB.
-* The backend uses collections for inventory, sales, slaughter batches, employees,
+* The backend uses collections for inventory, sales, slaughter batches, staff,
   attendance, deliveries, subscriptions, receivables, history, and users.
 * The page polls the server every 20 seconds while the user is idle.
 
@@ -106,9 +108,9 @@ The backend and MongoDB API remain independently runnable and deployable.
 |---|---|---|---|
 | POST | `/api/auth/login` | public | `{username,password}` → JWT |
 | GET | `/api/auth/me` | token | current user |
-| POST | `/api/auth/staff` | admin | Create an employee and login, or set up a login for an existing employee |
-| DELETE | `/api/auth/staff/:employeeId` | admin | Archive staff and disable login without deleting payroll or attendance history |
-| PATCH | `/api/auth/staff/:employeeId/restore` | admin | Restore archived staff and reactivate their login |
+| POST | `/api/auth/staff` | admin | Create a staff record and login, or set up a login for existing staff |
+| DELETE | `/api/auth/staff/:staffId` | admin | Archive staff and disable login without deleting payroll or attendance history |
+| PATCH | `/api/auth/staff/:staffId/restore` | admin | Restore archived staff and reactivate their login |
 | PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
 | PUT | `/api/state` | token | sync state changes |

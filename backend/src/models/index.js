@@ -55,13 +55,13 @@ const CashierEntry = model('CashierEntry', new Schema({
   takenBy: String, recordedBy: String, note: String
 }, opts));
 
-const Employee = model('Employee', new Schema({
+const Staff = model('Staff', new Schema({
   ...base, id: Number, name: String, phone: String, role: String, pin: String, baseSalary: Number, otRate: Number,
   allowance: Number, advance: Number, clockedIn: Boolean, lastClockIn: String, archivedAt: Date
-}, opts));
+}, opts), 'staffs');
 
 const AttendanceLog = model('AttendanceLog', new Schema({
-  ...base, id: Number, empId: Number, date: String, signIn: String, signOut: String,
+  ...base, id: Number, staffId: Number, date: String, signIn: String, signOut: String,
   hours: Number, ot: Number, signInAt: Date
 }, opts));
 
@@ -111,7 +111,7 @@ const collections = [
   { key: 'yearlyHistory',             Model: MonthlyHistory,    keyField: 'month' },
   { key: 'weeklyHistory',             Model: WeeklyHistory,     keyField: 'week' },
   // clockedIn / lastClockIn are owned by the server (QR + kiosk endpoints) and never overwritten by a browser sync
-  { key: 'employees',                 Model: Employee,          keyField: 'id',    adminOnly: true, protect: ['clockedIn', 'lastClockIn'] },
+  { key: 'staff',                     Model: Staff,             keyField: 'id',    adminOnly: true, protect: ['clockedIn', 'lastClockIn'] },
   { key: 'attendanceLogs',            Model: AttendanceLog,     keyField: 'id',    adminOnly: true, insertOnly: true, sortNewest: true },
   { key: 'deliveries',                Model: Delivery,          keyField: 'id' },
   { key: 'subscriptions',             Model: Subscription,     keyField: 'id' }
@@ -128,5 +128,5 @@ const collections = [
  */
 
 module.exports = {
-  collections, DailyVault, InventoryItem, InventoryStockAddition, Employee, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
+  collections, DailyVault, InventoryItem, InventoryStockAddition, Staff, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
 };

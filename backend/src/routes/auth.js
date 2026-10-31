@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
-const { Employee } = require('../models');
+const { Staff } = require('../models');
 const { signToken, requireAuth, requireAdmin } = require('../middleware/auth');
 
 function normalizePhone(value) {
@@ -33,36 +33,36 @@ router.get('/me', requireAuth, (req, res) => {
   res.json({ username, role, label });
 });
 
-// POST /api/auth/staff -> create an employee and their staff login (admin only)
+// POST /api/auth/staff -> create a staff record and login, or add a login to existing staff
 router.post('/staff', requireAuth, requireAdmin, async (req, res) => {
   const body = req.body || {};
-  const isExistingEmployee = body.employeeId !== undefined;
-  const employeeData = body.employee || {};
-  const name = String(employeeData.name || '').trim();
+  const isExistingStaff = body.staffId !== undefined;
+  const staffData = body.staff || {};
+  const name = String(staffData.name || '').trim();
   const phone = normalizePhone(body.phone);
   const password = String(body.password || '');
-  const id = Number(isExistingEmployee ? body.employeeId : employeeData.id);
+  const id = Number(isExistingStaff ? body.staffId : staffData.id);
 
-  if ((!isExistingEmployee && !name) || !Number.isSafeInteger(id) || id <= 0) {
-    return res.status(400).json({ error: 'A valid employee name and ID are required' });
+  if ((!isExistingStaff && !name) || !Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'A valid staff name and ID are required' });
   }
   if (!validPhone(phone)) return res.status(400).json({ error: 'Enter a valid phone number' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   if (await User.exists({ username: phone })) return res.status(409).json({ error: 'A staff account already uses this phone number' });
-  if (await User.exists({ employeeId: id })) return res.status(409).json({ error: 'This employee already has a staff account' });
+  if (await User.exists({ staffId: id })) return res.status(409).json({ error: 'This staff member already has a staff account' });
 
-  let employee;
+  let staff;
   try {
-    if (isExistingEmployee) {
-      employee = await Employee.findOne({ id });
-      if (!employee) return res.status(404).json({ error: 'Employee not found' });
-      if (employee.archivedAt) return res.status(409).json({ error: 'Restore this employee before creating a staff login' });
+    if (isExistingStaff) {
+      staff = await Staff.findOne({ id });
+      if (!staff) return res.status(404).json({ error: 'Staff member not found' });
+      if (staff.archivedAt) return res.status(409).json({ error: 'Restore this staff member before creating a staff login' });
     } else {
-      if (await Employee.exists({ id })) return res.status(409).json({ error: 'An employee already uses this ID' });
-      employee = await Employee.create({
-        ...employeeData,
+      if (await Staff.exists({ id })) return res.status(409).json({ error: 'A staff member already uses this ID' });
+      staff = await Staff.create({
+        ...staffData,
         uid: String(id),
-        seq: await Employee.countDocuments(),
+        seq: await Staff.countDocuments(),
         id,
         name
       });
@@ -72,56 +72,56 @@ router.post('/staff', requireAuth, requireAdmin, async (req, res) => {
       username: phone,
       passwordHash: await bcrypt.hash(password, 10),
       role: 'staff',
-      label: isExistingEmployee ? employee.name : name,
-      employeeId: id
+      label: isExistingStaff ? staff.name : name,
+      staffId: id
     });
-    employee.phone = phone;
+    staff.phone = phone;
     try {
-      await employee.save();
+      await staff.save();
     } catch (err) {
       await User.deleteOne({ _id: user._id });
       throw err;
     }
   } catch (err) {
-    if (!isExistingEmployee && employee) await Employee.deleteOne({ _id: employee._id });
-    if (err.code === 11000) return res.status(409).json({ error: 'A staff account or employee already uses these details' });
+    if (!isExistingStaff && staff) await Staff.deleteOne({ _id: staff._id });
+    if (err.code === 11000) return res.status(409).json({ error: 'A staff account or staff member already uses these details' });
     throw err;
   }
 
-  res.status(201).json({ employee: employee.toObject() });
+  res.status(201).json({ staff: staff.toObject() });
 });
 
-// DELETE /api/auth/staff/:employeeId -> archive employee and disable their account (admin only)
-router.delete('/staff/:employeeId', requireAuth, requireAdmin, async (req, res) => {
-  const employeeId = Number(req.params.employeeId);
-  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
-    return res.status(400).json({ error: 'Invalid employee ID' });
+// DELETE /api/auth/staff/:staffId -> archive staff and disable their account (admin only)
+router.delete('/staff/:staffId', requireAuth, requireAdmin, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isSafeInteger(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: 'Invalid staff ID' });
   }
 
-  const employee = await Employee.findOne({ id: employeeId });
-  if (!employee) return res.status(404).json({ error: 'Employee not found' });
-  if (employee.clockedIn) return res.status(409).json({ error: 'Sign this employee out before archiving them' });
-  if (!employee.archivedAt) {
-    employee.archivedAt = new Date();
-    await employee.save();
+  const staff = await Staff.findOne({ id: staffId });
+  if (!staff) return res.status(404).json({ error: 'Staff member not found' });
+  if (staff.clockedIn) return res.status(409).json({ error: 'Sign this staff member out before archiving them' });
+  if (!staff.archivedAt) {
+    staff.archivedAt = new Date();
+    await staff.save();
   }
-  await User.updateOne({ employeeId, role: 'staff' }, { $set: { isActive: false } });
-  res.json({ ok: true, employee: employee.toObject() });
+  await User.updateOne({ staffId, role: 'staff' }, { $set: { isActive: false } });
+  res.json({ ok: true, staff: staff.toObject() });
 });
 
-// PATCH /api/auth/staff/:employeeId/restore -> restore an archived employee (admin only)
-router.patch('/staff/:employeeId/restore', requireAuth, requireAdmin, async (req, res) => {
-  const employeeId = Number(req.params.employeeId);
-  if (!Number.isSafeInteger(employeeId) || employeeId <= 0) {
-    return res.status(400).json({ error: 'Invalid employee ID' });
+// PATCH /api/auth/staff/:staffId/restore -> restore staff (admin only)
+router.patch('/staff/:staffId/restore', requireAuth, requireAdmin, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isSafeInteger(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: 'Invalid staff ID' });
   }
 
-  const employee = await Employee.findOne({ id: employeeId });
-  if (!employee) return res.status(404).json({ error: 'Employee not found' });
-  employee.archivedAt = undefined;
-  await employee.save();
-  await User.updateOne({ employeeId, role: 'staff' }, { $set: { isActive: true } });
-  res.json({ ok: true, employee: employee.toObject() });
+  const staff = await Staff.findOne({ id: staffId });
+  if (!staff) return res.status(404).json({ error: 'Staff member not found' });
+  staff.archivedAt = undefined;
+  await staff.save();
+  await User.updateOne({ staffId, role: 'staff' }, { $set: { isActive: true } });
+  res.json({ ok: true, staff: staff.toObject() });
 });
 
 // PUT /api/auth/me -> staff may update their own name, phone, and password
@@ -140,27 +140,27 @@ router.put('/me', requireAuth, async (req, res) => {
   }
 
   const user = await User.findById(req.user.sub);
-  if (!user || !user.employeeId) return res.status(404).json({ error: 'Staff account is not linked to an employee record' });
+  if (!user || !user.staffId) return res.status(404).json({ error: 'Staff account is not linked to a staff record' });
   if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
     return res.status(401).json({ error: 'Current password is incorrect' });
   }
 
-  const employee = await Employee.findOne({ id: user.employeeId });
-  if (!employee) return res.status(404).json({ error: 'Employee record not found' });
+  const staff = await Staff.findOne({ id: user.staffId });
+  if (!staff) return res.status(404).json({ error: 'Staff record not found' });
   const duplicate = await User.findOne({ username: phone, _id: { $ne: user._id } });
   if (duplicate) return res.status(409).json({ error: 'A staff account already uses this phone number' });
-  const duplicateEmployee = await Employee.findOne({ phone, id: { $ne: user.employeeId } });
-  if (duplicateEmployee) return res.status(409).json({ error: 'A staff member already uses this phone number' });
+  const duplicateStaff = await Staff.findOne({ phone, id: { $ne: user.staffId } });
+  if (duplicateStaff) return res.status(409).json({ error: 'A staff member already uses this phone number' });
 
   user.username = phone;
   user.label = name;
   if (newPassword) user.passwordHash = await bcrypt.hash(newPassword, 10);
-  employee.name = name;
-  employee.phone = phone;
+  staff.name = name;
+  staff.phone = phone;
 
   try {
     await user.save();
-    await employee.save();
+    await staff.save();
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: 'A staff account already uses this phone number' });
     throw err;

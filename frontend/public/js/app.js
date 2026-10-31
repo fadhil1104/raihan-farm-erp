@@ -367,8 +367,17 @@ function queueSave() {
 
 function ensureStateCollections() {
   if (!state) return;
+  if (!Array.isArray(state.staff)) state.staff = Array.isArray(state.employees) ? state.employees : [];
+  delete state.employees;
   if (!Array.isArray(state.customers)) state.customers = [];
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  if (Array.isArray(state.attendanceLogs)) {
+    state.attendanceLogs = state.attendanceLogs.map((log) => {
+      if (log.staffId !== undefined || log.empId === undefined) return log;
+      const { empId, ...rest } = log;
+      return { ...rest, staffId: empId };
+    });
+  }
   if (!state.dailyVault || typeof state.dailyVault !== 'object') state.dailyVault = {};
 }
 
@@ -2193,11 +2202,11 @@ async function openMobileQrPortal() {
   } catch (err) {
     return showToast(err.message, 'error');
   }
-  $('mob-qr-emp-select').innerHTML = qrRoster.map((e) =>
+  $('mob-qr-staff-select').innerHTML = qrRoster.map((e) =>
     `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)} (${e.clockedIn ? 'Currently Signed In' : 'Signed Out'})</option>`).join('');
   $('mob-qr-live-time').innerText = `${getTodayDate()} • ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   $('mob-qr-pin-input').value = '';
-  updateMobileQrEmpStatus();
+  updateMobileQrStaffStatus();
   $('mobile-qr-modal').classList.remove('hidden');
 }
 
@@ -2206,14 +2215,14 @@ function closeMobileQrPortal() {
   if (!currentUser) openLoginModal();
 }
 
-function updateMobileQrEmpStatus() {
-  const emp = qrRoster.find((e) => e.id === Number($('mob-qr-emp-select').value));
-  if (!emp) return;
+function updateMobileQrStaffStatus() {
+  const staff = qrRoster.find((member) => member.id === Number($('mob-qr-staff-select').value));
+  if (!staff) return;
   const statusEl = $('mob-qr-cur-status'), btnEl = $('mob-qr-submit-btn');
   const base = 'w-full py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition shadow-lg flex items-center justify-center gap-2';
-  if (emp.clockedIn) {
+  if (staff.clockedIn) {
     statusEl.className = 'text-emerald-400 font-black';
-    statusEl.innerText = `ON SHIFT (Signed in at ${emp.lastClockIn})`;
+    statusEl.innerText = `ON SHIFT (Signed in at ${staff.lastClockIn})`;
     btnEl.className = `${base} bg-amber-500 hover:bg-amber-400 text-slate-950`;
     btnEl.innerHTML = '<i class="fa-solid fa-right-from-bracket"></i> Scan Complete — Tap to Sign Out';
   } else {
@@ -2225,11 +2234,11 @@ function updateMobileQrEmpStatus() {
 }
 
 async function submitMobileQrClock() {
-  const empId = Number($('mob-qr-emp-select').value);
+  const staffId = Number($('mob-qr-staff-select').value);
   const pin = $('mob-qr-pin-input').value.trim();
   if (!/^\d{4}$/.test(pin)) return showToast('Enter your 4-digit PIN.', 'error');
   try {
-    const res = await Api.qrClock(empId, pin);
+    const res = await Api.qrClock(staffId, pin);
     showToast(res.message, res.action === 'IN' ? 'success' : 'info');
     $('mobile-qr-modal').classList.add('hidden');
     if (currentUser) { await flushNow(); await pullFromServer(); } else openLoginModal();
@@ -2281,20 +2290,20 @@ async function saveStaffProfile() {
   }
 }
 
-async function toggleClock(empId) {
+async function toggleClock(staffId) {
   try {
-    const res = await Api.kioskClock(empId);
+    const res = await Api.kioskClock(staffId);
     showToast(res.message, res.action === 'IN' ? 'success' : 'info');
     await flushNow();
     await pullFromServer();
   } catch (err) { showToast(err.message, 'error'); }
 }
 
-async function manualSignOut(empId, button) {
+async function manualSignOut(staffId, button) {
   button.disabled = true;
   button.innerText = 'Signing Out…';
   try {
-    const res = await Api.manualSignOut(empId);
+    const res = await Api.manualSignOut(staffId);
     showToast(res.message, 'info');
     await flushNow();
     await pullFromServer();
@@ -2312,11 +2321,11 @@ function saveManualAttendance() {
   const hours = Number($('man-hours').value);
   const signIn = $('man-in').value.trim();
   const signOut = $('man-out').value.trim();
-  if (!$('man-emp').value || !signIn || !signOut || !Number.isFinite(hours) || hours <= 0) {
-    return showToast('Select an employee and enter sign-in, sign-out, and valid hours.', 'error');
+  if (!$('man-staff').value || !signIn || !signOut || !Number.isFinite(hours) || hours <= 0) {
+    return showToast('Select a staff member and enter sign-in, sign-out, and valid hours.', 'error');
   }
   state.attendanceLogs.unshift({
-    id: Date.now(), empId: Number($('man-emp').value), date: $('man-date').value || getTodayDate(),
+    id: Date.now(), staffId: Number($('man-staff').value), date: $('man-date').value || getTodayDate(),
     signIn, signOut,
     hours, ot: Math.max(0, hours - 10)
   });
@@ -2325,44 +2334,44 @@ function saveManualAttendance() {
   showToast('Manual shift & overtime logged!', 'success');
 }
 
-function openAddEmployeeModal() { $('add-emp-modal').classList.toggle('hidden'); }
+function openAddStaffModal() { $('add-staff-modal').classList.toggle('hidden'); }
 
-async function archiveStaff(employeeId) {
-  const employee = state.employees.find((entry) => entry.id === employeeId);
-  if (!employee || !confirm(`Archive ${employee.name}? Their account will be disabled, but their attendance and payroll history will be kept.`)) return;
+async function archiveStaff(staffId) {
+  const staff = state.staff.find((entry) => entry.id === staffId);
+  if (!staff || !confirm(`Archive ${staff.name}? Their account will be disabled, but their attendance and payroll history will be kept.`)) return;
   try {
-    const result = await Api.archiveStaff(employeeId);
-    employee.archivedAt = result.employee.archivedAt;
+    const result = await Api.archiveStaff(staffId);
+    staff.archivedAt = result.staff.archivedAt;
     renderAll();
-    showToast(`${employee.name} archived. Their reports remain available.`, 'success');
+    showToast(`${staff.name} archived. Their reports remain available.`, 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-async function restoreStaff(employeeId) {
-  const employee = state.employees.find((entry) => entry.id === employeeId);
-  if (!employee) return;
+async function restoreStaff(staffId) {
+  const staff = state.staff.find((entry) => entry.id === staffId);
+  if (!staff) return;
   try {
-    await Api.restoreStaff(employeeId);
-    delete employee.archivedAt;
+    await Api.restoreStaff(staffId);
+    delete staff.archivedAt;
     renderAll();
-    showToast(`${employee.name} restored and can sign in again.`, 'success');
+    showToast(`${staff.name} restored and can sign in again.`, 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
 async function createExistingStaffAccount() {
-  const employeeId = Number($('existing-staff-account-employee').value);
+  const staffId = Number($('existing-staff-account-select').value);
   const phone = $('existing-staff-account-phone').value.trim();
   const password = $('existing-staff-account-password').value;
-  if (!employeeId || !phone || !password) return showToast('Select a staff member and enter their phone number and password.', 'error');
+  if (!staffId || !phone || !password) return showToast('Select a staff member and enter their phone number and password.', 'error');
   if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
   try {
-    await Api.createStaffAccount(employeeId, phone, password);
-    const employee = state.employees.find((entry) => entry.id === employeeId);
-    if (employee) employee.phone = phone;
+    await Api.createStaffAccount(staffId, phone, password);
+    const staff = state.staff.find((entry) => entry.id === staffId);
+    if (staff) staff.phone = phone;
     $('existing-staff-account-phone').value = '';
     $('existing-staff-account-password').value = '';
     saveState();
@@ -2372,25 +2381,25 @@ async function createExistingStaffAccount() {
   }
 }
 
-async function saveNewEmployee() {
-  const name = $('new-emp-name').value.trim();
-  const phone = $('new-emp-phone').value.trim();
-  const password = $('new-emp-password').value;
-  if (!name || !phone || !password) return showToast('Enter the employee name, phone number, and password.', 'error');
+async function saveNewStaff() {
+  const name = $('new-staff-name').value.trim();
+  const phone = $('new-staff-phone').value.trim();
+  const password = $('new-staff-password').value;
+  if (!name || !phone || !password) return showToast('Enter the staff member name, phone number, and password.', 'error');
   if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
   const pin = String(Math.floor(1000 + Math.random() * 9000));
-  const employee = {
-    id: Date.now(), name, role: $('new-emp-role').value, pin,
+  const staff = {
+    id: Date.now(), name, role: $('new-staff-role').value, pin,
     phone,
-    baseSalary: Number($('new-emp-base').value) || 48000, otRate: Number($('new-emp-otrate').value) || 350,
-    allowance: Number($('new-emp-allowance').value) || 6000, advance: 0, clockedIn: false, lastClockIn: null
+    baseSalary: Number($('new-staff-base').value) || 48000, otRate: Number($('new-staff-otrate').value) || 350,
+    allowance: Number($('new-staff-allowance').value) || 6000, advance: 0, clockedIn: false, lastClockIn: null
   };
   try {
-    await Api.createStaff(employee, phone, password);
-    state.employees.push(employee);
-    ['new-emp-name', 'new-emp-phone', 'new-emp-password', 'new-emp-base', 'new-emp-otrate', 'new-emp-allowance']
+    await Api.createStaff(staff, phone, password);
+    state.staff.push(staff);
+    ['new-staff-name', 'new-staff-phone', 'new-staff-password', 'new-staff-base', 'new-staff-otrate', 'new-staff-allowance']
       .forEach((id) => { $(id).value = ''; });
-    $('add-emp-modal').classList.add('hidden');
+    $('add-staff-modal').classList.add('hidden');
     saveState();
     showToast(`${name} added. Staff can sign in with their phone and password; QR attendance PIN: ${pin}.`, 'success');
   } catch (err) {
@@ -2398,40 +2407,40 @@ async function saveNewEmployee() {
   }
 }
 
-function updatePayrollField(empId, field, value) {
-  const emp = state.employees.find((e) => e.id === empId);
-  if (!emp) return;
-  emp[field] = Number(value) || 0;
+function updatePayrollField(staffId, field, value) {
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return;
+  staff[field] = Number(value) || 0;
   saveState();
-  showToast(`Updated ${emp.name}'s ${field}`, 'info');
+  showToast(`Updated ${staff.name}'s ${field}`, 'info');
 }
 
 // Payroll uses the current calendar month's attendance only
-const monthLogs = (empId) => {
+const monthLogs = (staffId) => {
   const prefix = getTodayDate().slice(0, 7);
-  return state.attendanceLogs.filter((l) => l.empId === empId && String(l.date).startsWith(prefix));
+  return state.attendanceLogs.filter((log) => log.staffId === staffId && String(log.date).startsWith(prefix));
 };
-const payrollOf = (emp) => {
-  const logs = monthLogs(emp.id);
+const payrollOf = (staff) => {
+  const logs = monthLogs(staff.id);
   const totalOt = logs.reduce((s, l) => s + Number(l.ot || 0), 0);
-  const otPay = Math.round(totalOt * emp.otRate);
-  return { logs, totalOt, otPay, netPay: emp.baseSalary + otPay + emp.allowance - emp.advance };
+  const otPay = Math.round(totalOt * staff.otRate);
+  return { logs, totalOt, otPay, netPay: staff.baseSalary + otPay + staff.allowance - staff.advance };
 };
 
-function openPayslipModal(empId) {
-  const emp = state.employees.find((e) => e.id === empId);
-  if (!emp) return;
-  const p = payrollOf(emp);
+function openPayslipModal(staffId) {
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return;
+  const p = payrollOf(staff);
   $('ps-month').innerText = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  $('ps-name').innerText = emp.name;
-  $('ps-role').innerText = emp.role;
+  $('ps-name').innerText = staff.name;
+  $('ps-role').innerText = staff.role;
   $('ps-shifts').innerText = `${p.logs.length} Shifts`;
   $('ps-ot-hours').innerText = `${p.totalOt.toFixed(1)} hrs`;
-  $('ps-base').innerText = `Rs. ${emp.baseSalary.toLocaleString()}`;
-  $('ps-ot-rate').innerText = `(${p.totalOt.toFixed(1)} hrs × Rs. ${emp.otRate})`;
+  $('ps-base').innerText = `Rs. ${staff.baseSalary.toLocaleString()}`;
+  $('ps-ot-rate').innerText = `(${p.totalOt.toFixed(1)} hrs × Rs. ${staff.otRate})`;
   $('ps-ot-pay').innerText = `+ Rs. ${p.otPay.toLocaleString()}`;
-  $('ps-allowance').innerText = `+ Rs. ${emp.allowance.toLocaleString()}`;
-  $('ps-advance').innerText = `- Rs. ${emp.advance.toLocaleString()}`;
+  $('ps-allowance').innerText = `+ Rs. ${staff.allowance.toLocaleString()}`;
+  $('ps-advance').innerText = `- Rs. ${staff.advance.toLocaleString()}`;
   $('ps-net').innerText = `Rs. ${p.netPay.toLocaleString()}`;
   $('ps-date').innerText = `Date: ${getTodayDate()}`;
   $('payslip-modal').classList.remove('hidden');
@@ -2479,10 +2488,10 @@ function addDelivery() {
   const customer = $('del-customer').value.trim();
   const items = $('del-items').value.trim();
   if (!customer || !items) return showToast('Please enter customer and meat order details.', 'error');
-  const riders = state.employees.filter((e) => /rider/i.test(e.role));
+  const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer, phone: $('del-phone').value.trim(), area: $('del-area').value.trim(),
-    items, date: getTomorrowDate(), slot: $('del-slot').value, rider: (riders[0] || state.employees[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
+    items, date: getTomorrowDate(), slot: $('del-slot').value, rider: (riders[0] || state.staff[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
   });
   ['del-customer', 'del-phone', 'del-area', 'del-items'].forEach((id) => { $(id).value = ''; });
   saveState();
@@ -2526,10 +2535,10 @@ function addSubscription() {
 function pushSubToTomorrow(subId) {
   const sub = state.subscriptions.find((s) => s.id === subId);
   if (!sub) return;
-  const riders = state.employees.filter((e) => /rider/i.test(e.role));
+  const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer: `${sub.customer} (Weekly Sub)`, phone: sub.phone, area: sub.area, items: sub.pack,
-    date: getTomorrowDate(), slot: 'Morning (07:00 AM - 10:00 AM)', rider: (riders[0] || state.employees[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
+    date: getTomorrowDate(), slot: 'Morning (07:00 AM - 10:00 AM)', rider: (riders[0] || state.staff[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
   });
   saveState();
   showToast(`${sub.customer}'s weekly box added to tomorrow's dispatch!`, 'success');
@@ -2818,8 +2827,8 @@ function renderSlaughterProducts() {
 function renderAll() {
   if (!state) return;
   const isAdmin = currentUser && currentUser.role === 'admin';
-  const activeEmployees = state.employees.filter((employee) => !employee.archivedAt);
-  const archivedEmployees = state.employees.filter((employee) => employee.archivedAt);
+  const activeStaff = state.staff.filter((member) => !member.archivedAt);
+  const archivedStaff = state.staff.filter((member) => member.archivedAt);
   const manDate = $('man-date');
   if (manDate && !manDate.value) manDate.value = getTodayDate();
 
@@ -2840,12 +2849,12 @@ function renderAll() {
   $('kpi-waste-sub').innerText = state.slaughterBatches.length
     ? `${state.slaughterBatches.length} farm batches processed`
     : 'No slaughter batches recorded';
-  $('kpi-staff').innerText = activeEmployees.length
-    ? `${activeEmployees.filter((e) => e.clockedIn).length} / ${activeEmployees.length}`
+  $('kpi-staff').innerText = activeStaff.length
+    ? `${activeStaff.filter((member) => member.clockedIn).length} / ${activeStaff.length}`
     : '—';
   let totalPayroll = 0, totalShopOt = 0;
-  activeEmployees.forEach((emp) => { const p = payrollOf(emp); totalShopOt += p.totalOt; totalPayroll += p.netPay; });
-  $('kpi-payroll-mini').innerText = activeEmployees.length ? `Month Payroll: Rs. ${totalPayroll.toLocaleString()}` : 'No payroll records';
+  activeStaff.forEach((member) => { const p = payrollOf(member); totalShopOt += p.totalOt; totalPayroll += p.netPay; });
+  $('kpi-payroll-mini').innerText = activeStaff.length ? `Month Payroll: Rs. ${totalPayroll.toLocaleString()}` : 'No payroll records';
   $('dash-ot-summary').innerText = state.attendanceLogs.length ? `Total OT: ${totalShopOt.toFixed(1)} hrs` : '';
   $('kpi-deliveries').innerText = state.deliveries.length ? `${state.deliveries.length} Orders` : '—';
   $('kpi-subs-mini').innerText = state.subscriptions.length ? `${state.subscriptions.length} weekly box subscribers` : 'No subscriptions recorded';
@@ -2871,9 +2880,9 @@ function renderAll() {
       <span class="px-2 py-1 rounded-lg font-bold ${b.wastePct <= 31 ? 'bg-yellow-400/15 text-yellow-400' : 'bg-red-500/20 text-red-400'}">${b.wastePct}% Waste</span>
     </div>`).join('');
 
-  $('dash-attendance-list').innerHTML = activeEmployees.length === 0
+  $('dash-attendance-list').innerHTML = activeStaff.length === 0
     ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No staff records yet.</div>'
-    : activeEmployees.slice(0, 4).map((e) => `
+    : activeStaff.slice(0, 4).map((e) => `
     <div class="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
       <div><p class="font-bold text-white">${esc(e.name)}</p><p class="text-slate-400 text-[11px]">${esc(e.role)}</p></div>
       <span class="px-2.5 py-1 rounded-full font-bold ${e.clockedIn ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}">${e.clockedIn ? 'In (' + esc(e.lastClockIn) + ')' : 'Signed Out'}</span>
@@ -2936,7 +2945,7 @@ function renderAll() {
   renderPosSalesHistory();
 
   // Attendance kiosk
-  $('kiosk-cards').innerHTML = activeEmployees.length ? activeEmployees.map((e) => {
+  $('kiosk-cards').innerHTML = activeStaff.length ? activeStaff.map((e) => {
     const shifts = monthLogs(e.id).length;
     return `
       <div class="card p-4 flex flex-col justify-between border ${e.clockedIn ? 'border-yellow-400/50' : 'border-slate-800'}">
@@ -2957,51 +2966,51 @@ function renderAll() {
       </div>`;
   }).join('') : '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No active staff. Add a staff member from Month-End Payroll.</div>';
 
-  const filterEl = $('filter-emp-logs');
+  const filterEl = $('filter-staff-logs');
   const curFilter = filterEl.value || 'ALL';
-  filterEl.innerHTML = `<option value="ALL">All Staff History (${state.employees.length})</option>` + state.employees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}${e.archivedAt ? ' (Archived)' : ''}</option>`).join('');
+  filterEl.innerHTML = `<option value="ALL">All Staff History (${state.staff.length})</option>` + state.staff.map((member) => `<option value="${member.id}">${esc(member.name)} — ${esc(member.role)}${member.archivedAt ? ' (Archived)' : ''}</option>`).join('');
   filterEl.value = [...filterEl.options].some((o) => o.value === curFilter) ? curFilter : 'ALL';
-  $('man-emp').innerHTML = activeEmployees.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
-  $('existing-staff-account-employee').innerHTML = activeEmployees.map((e) => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join('');
+  $('man-staff').innerHTML = activeStaff.map((member) => `<option value="${member.id}">${esc(member.name)}</option>`).join('');
+  $('existing-staff-account-select').innerHTML = activeStaff.map((member) => `<option value="${member.id}">${esc(member.name)} — ${esc(member.role)}</option>`).join('');
   renderAttendanceLogs();
 
   // Payroll
-  $('payroll-tbody').innerHTML = activeEmployees.map((emp) => {
-    const p = payrollOf(emp);
+  $('payroll-tbody').innerHTML = activeStaff.map((staff) => {
+    const p = payrollOf(staff);
     return `
       <tr class="hover:bg-slate-800/40 transition">
-        <td class="py-3 px-3"><div class="font-bold text-white">${esc(emp.name)}</div><div class="text-xs text-slate-400">${esc(emp.role)}</div></td>
+        <td class="py-3 px-3"><div class="font-bold text-white">${esc(staff.name)}</div><div class="text-xs text-slate-400">${esc(staff.role)}</div></td>
         <td class="py-3 px-3 font-semibold">${p.logs.length}</td>
-        <td class="py-3 px-3">Rs. ${emp.baseSalary.toLocaleString()}</td>
+        <td class="py-3 px-3">Rs. ${staff.baseSalary.toLocaleString()}</td>
         <td class="py-3 px-3 font-bold text-yellow-400">${p.totalOt.toFixed(1)} hrs</td>
         <td class="py-3 px-3 font-semibold text-emerald-400">+ Rs. ${p.otPay.toLocaleString()}</td>
-        <td class="py-3 px-3"><input type="number" value="${emp.allowance}" onchange="updatePayrollField(${emp.id}, 'allowance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold"></td>
-        <td class="py-3 px-3"><input type="number" value="${emp.advance}" onchange="updatePayrollField(${emp.id}, 'advance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold text-red-400"></td>
+        <td class="py-3 px-3"><input type="number" value="${staff.allowance}" onchange="updatePayrollField(${staff.id}, 'allowance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold"></td>
+        <td class="py-3 px-3"><input type="number" value="${staff.advance}" onchange="updatePayrollField(${staff.id}, 'advance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold text-red-400"></td>
         <td class="py-3 px-3 text-right font-black text-base text-yellow-400">Rs. ${p.netPay.toLocaleString()}</td>
-        <td class="py-3 px-3 text-center"><button onclick="openPayslipModal(${emp.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-print mr-1"></i> Payslip</button></td>
-        <td class="py-3 px-3 text-center"><button onclick="archiveStaff(${emp.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i> Archive</button></td>
+        <td class="py-3 px-3 text-center"><button onclick="openPayslipModal(${staff.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-print mr-1"></i> Payslip</button></td>
+        <td class="py-3 px-3 text-center"><button onclick="archiveStaff(${staff.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i> Archive</button></td>
       </tr>`;
   }).join('');
 
-  $('archived-staff-reports').classList.toggle('hidden', archivedEmployees.length === 0);
-  $('archived-staff-tbody').innerHTML = archivedEmployees.map((emp) => {
-    const logs = state.attendanceLogs.filter((log) => log.empId === emp.id);
+  $('archived-staff-reports').classList.toggle('hidden', archivedStaff.length === 0);
+  $('archived-staff-tbody').innerHTML = archivedStaff.map((staff) => {
+    const logs = state.attendanceLogs.filter((log) => log.staffId === staff.id);
     const hours = logs.reduce((total, log) => total + Number(log.hours || 0), 0);
     const overtime = logs.reduce((total, log) => total + Number(log.ot || 0), 0);
-    const payroll = payrollOf(emp);
+    const payroll = payrollOf(staff);
     return `<tr>
-      <td class="py-3 px-3"><div class="font-bold text-white">${esc(emp.name)}</div><div class="text-xs text-slate-400">${esc(emp.role)}</div></td>
-      <td class="py-3 px-3 text-slate-300">${esc(String(emp.archivedAt).slice(0, 10))}</td>
+      <td class="py-3 px-3"><div class="font-bold text-white">${esc(staff.name)}</div><div class="text-xs text-slate-400">${esc(staff.role)}</div></td>
+      <td class="py-3 px-3 text-slate-300">${esc(String(staff.archivedAt).slice(0, 10))}</td>
       <td class="py-3 px-3">${logs.length}</td>
       <td class="py-3 px-3">${hours.toFixed(1)} hrs</td>
       <td class="py-3 px-3 text-yellow-400">${overtime.toFixed(1)} hrs</td>
       <td class="py-3 px-3">This month: Rs. ${payroll.netPay.toLocaleString()}</td>
-      <td class="py-3 px-3 text-center"><button onclick="restoreStaff(${emp.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i> Restore</button></td>
+      <td class="py-3 px-3 text-center"><button onclick="restoreStaff(${staff.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i> Restore</button></td>
     </tr>`;
   }).join('');
 
   // Deliveries & subscriptions
-  const riders = activeEmployees.map((e) => e.name);
+  const riders = activeStaff.map((member) => member.name);
   const statuses = ['Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
   $('deliveries-tbody').innerHTML = state.deliveries.map((d) => `
     <tr class="hover:bg-slate-800/40 transition">
@@ -3027,16 +3036,16 @@ function renderAll() {
 
 function renderAttendanceLogs() {
   if (!state) return;
-  const filterVal = $('filter-emp-logs').value;
-  const banner = $('filtered-emp-banner');
-  const logs = filterVal === 'ALL' ? state.attendanceLogs : state.attendanceLogs.filter((l) => String(l.empId) === String(filterVal));
+  const filterVal = $('filter-staff-logs').value;
+  const banner = $('filtered-staff-banner');
+  const logs = filterVal === 'ALL' ? state.attendanceLogs : state.attendanceLogs.filter((log) => String(log.staffId) === String(filterVal));
   if (filterVal !== 'ALL') {
-    const emp = state.employees.find((e) => String(e.id) === String(filterVal));
-    if (emp) {
+    const staff = state.staff.find((member) => String(member.id) === String(filterVal));
+    if (staff) {
       banner.classList.remove('hidden');
       banner.innerHTML = `
-        <div><span class="text-xs uppercase text-yellow-400 font-bold">Individual Employee Attendance Summary</span>
-        <h4 class="text-base font-black text-white">${esc(emp.name)} <span class="text-xs font-normal text-slate-400">(${esc(emp.role)}${emp.archivedAt ? ', Archived' : ''})</span></h4></div>
+        <div><span class="text-xs uppercase text-yellow-400 font-bold">Individual Staff Attendance Summary</span>
+        <h4 class="text-base font-black text-white">${esc(staff.name)} <span class="text-xs font-normal text-slate-400">(${esc(staff.role)}${staff.archivedAt ? ', Archived' : ''})</span></h4></div>
         <div class="flex gap-6 text-xs">
           <div><span class="text-slate-400 block">Shifts Logged</span><strong class="text-sm text-white">${logs.length} Shifts</strong></div>
           <div><span class="text-slate-400 block">Total Hours</span><strong class="text-sm text-emerald-400">${logs.reduce((s, l) => s + Number(l.hours || 0), 0).toFixed(1)} hrs</strong></div>
@@ -3046,17 +3055,17 @@ function renderAttendanceLogs() {
   } else banner.classList.add('hidden');
 
   $('attendance-log-tbody').innerHTML = logs.map((l) => {
-    const emp = state.employees.find((e) => e.id === l.empId) || { name: 'Staff', role: '-' };
+    const staff = state.staff.find((member) => member.id === l.staffId) || { name: 'Staff', role: '-' };
     return `
       <tr class="hover:bg-slate-800/40 transition">
         <td class="py-3 px-4 text-slate-300 font-medium">${esc(l.date)}</td>
-        <td class="py-3 px-4 font-bold text-white">${esc(emp.name)}${emp.archivedAt ? ' <span class="text-[10px] text-amber-300">(Archived)</span>' : ''}</td>
-        <td class="py-3 px-4 text-xs text-slate-400">${esc(emp.role)}</td>
+        <td class="py-3 px-4 font-bold text-white">${esc(staff.name)}${staff.archivedAt ? ' <span class="text-[10px] text-amber-300">(Archived)</span>' : ''}</td>
+        <td class="py-3 px-4 text-xs text-slate-400">${esc(staff.role)}</td>
         <td class="py-3 px-4 text-emerald-400 font-semibold">${esc(l.signIn)}</td>
         <td class="py-3 px-4 ${l.signOut === 'Active Shift' ? 'text-yellow-400 font-bold' : 'text-slate-300'}">${esc(l.signOut)}</td>
         <td class="py-3 px-4 font-medium">${Number(l.hours).toFixed(1)} hrs</td>
         <td class="py-3 px-4 text-yellow-400 font-bold">+${Number(l.ot).toFixed(1)} hrs</td>
-        <td class="py-3 px-4">${l.signOut === 'Active Shift' ? `<button onclick="manualSignOut(${l.empId}, this)" class="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap"><i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out</button>` : '—'}</td>
+        <td class="py-3 px-4">${l.signOut === 'Active Shift' ? `<button onclick="manualSignOut(${l.staffId}, this)" class="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap"><i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out</button>` : '—'}</td>
       </tr>`;
   }).join('');
 }
