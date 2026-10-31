@@ -50,6 +50,7 @@ let state = null;                       // loaded from the API after login
 let currentUser = null;                 // { username, role, label }
 let selectedPosCategoryId = null;
 let posCart = [];
+let showAllPosProducts = false;
 let pendingPosSale = null;
 let pendingReceiptRedemptionSaleId = null;
 let activeReceiptPrintSaleId = null;
@@ -1789,7 +1790,40 @@ function renderPosCart() {
   $('pos-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
   $('pos-total-weight').innerText = `${totalKg.toFixed(2)} kg total dressed weight`;
   $('pos-grand-total').innerText = `Rs. ${Math.max(0, subtotal - discount).toLocaleString()}`;
+  updatePosCashSummary();
   updatePosLoyaltySummary();
+}
+
+function updatePosCashPayment() {
+  const cashPayment = $('pos-pay-method').value === 'CASH';
+  $('pos-cash-payment').classList.toggle('hidden', !cashPayment);
+  $('pos-change-summary').classList.toggle('hidden', !cashPayment);
+  updatePosCashSummary();
+}
+
+function updatePosCashSummary() {
+  if (!$('pos-pay-method') || $('pos-pay-method').value !== 'CASH') return;
+  const subtotal = posCart.reduce((sum, item) => sum + item.lineTotal, 0);
+  const discount = Math.max(0, Number($('pos-discount').value) || 0);
+  const total = Math.max(0, subtotal - discount);
+  const enteredAmount = $('pos-cash-received').value.trim();
+  const cashReceived = enteredAmount === '' ? 0 : Number(enteredAmount);
+  const changeAmount = $('pos-change-amount');
+  const changeLabel = $('pos-change-label');
+
+  if (!Number.isFinite(cashReceived) || cashReceived < total) {
+    const remaining = Math.max(0, total - (Number.isFinite(cashReceived) ? cashReceived : 0));
+    changeLabel.innerText = 'Remaining cash due';
+    changeAmount.innerText = `Rs. ${remaining.toLocaleString()}`;
+    changeAmount.classList.remove('text-emerald-300');
+    changeAmount.classList.add('text-amber-300');
+    return;
+  }
+
+  changeLabel.innerText = 'Balance to return';
+  changeAmount.innerText = `Rs. ${(cashReceived - total).toLocaleString()}`;
+  changeAmount.classList.remove('text-amber-300');
+  changeAmount.classList.add('text-emerald-300');
 }
 
 function getPosLoyaltyCustomer(phone = $('pos-cust-phone').value) {
@@ -1927,6 +1961,14 @@ function completePosSale() {
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
   const grandTotal = Math.max(0, subtotal - discount);
+  const cashReceivedInput = $('pos-cash-received').value.trim();
+  const cashReceivedRs = payment === 'CASH' && cashReceivedInput !== ''
+    ? Number(cashReceivedInput)
+    : 0;
+  if (payment === 'CASH' && (!Number.isFinite(cashReceivedRs) || cashReceivedRs < grandTotal)) {
+    return showToast(`Enter at least Rs. ${grandTotal.toLocaleString()} received from the customer.`, 'error');
+  }
+  const changeRs = payment === 'CASH' ? cashReceivedRs - grandTotal : 0;
   const receiptId = 'POS-' + Date.now().toString().slice(-7);
   const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -1970,7 +2012,7 @@ function completePosSale() {
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
     totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
-    payment, subtotal, discount, totalRs: grandTotal,
+    payment, subtotal, discount, totalRs: grandTotal, cashReceivedRs, changeRs,
     loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
     loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: customerPhoneKey ? pointsBalanceAfter : 0,
@@ -1998,6 +2040,11 @@ function renderPosSaleReceipt(sale) {
   $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
   $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
   $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
+  const cashPayment = sale.payment === 'CASH';
+  $('rc-cash-paid-row').classList.toggle('hidden', !cashPayment);
+  $('rc-cash-change-row').classList.toggle('hidden', !cashPayment);
+  $('rc-cash-paid').innerText = `Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}`;
+  $('rc-cash-change').innerText = `Rs. ${Number(sale.changeRs || 0).toLocaleString()}`;
   $('rc-loyalty').innerText = sale.customerPhoneKey
     ? `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} will be redeemed after printing • ${Number(sale.loyaltyPointsBalanceAfter || 0) + Number(sale.loyaltyPointsRedeemed || 0)} current points`
     : 'Add a customer phone number to earn points.';
@@ -2058,6 +2105,7 @@ function confirmPosSale() {
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
     totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs,
+    cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
     loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
   });
@@ -2072,10 +2120,12 @@ function confirmPosSale() {
   posCart = [];
   $('pos-cust-phone').value = '';
   $('pos-cust-name').value = '';
+  $('pos-cash-received').value = '';
   $('pos-cust-name').readOnly = false;
   $('pos-customer-status').innerText = '';
   updatePosLoyaltySummary();
   $('pos-discount').value = 0;
+  updatePosCashSummary();
   $('receipt-review-note').classList.add('hidden');
   $('receipt-preview-actions').classList.add('hidden');
   $('receipt-saved-actions').classList.remove('hidden');
@@ -2573,11 +2623,12 @@ function renderPosProducts() {
   const query = ($('pos-product-search')?.value || '').trim().toLocaleLowerCase();
   const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const visibleItems = showAllPosProducts ? items : items.slice(0, 6);
   $('pos-product-grid').innerHTML = state.inventory.length === 0
     ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No inventory items yet. Add stock before creating a sale.</div>'
     : items.length === 0
       ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No products start with that search text.</div>'
-      : items.map((item) => {
+      : visibleItems.map((item) => {
     const sel = item.id === selectedPosCategoryId, low = inventoryStock(item) <= inventoryMinStock(item);
     return `
       <button type="button" onclick="selectPosProduct('${esc(item.id)}')" class="text-left cursor-pointer p-4 rounded-xl border transition flex flex-col justify-between ${sel ? 'bg-yellow-400/15 border-yellow-400 shadow-lg shadow-yellow-400/10' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'}">
@@ -2588,6 +2639,22 @@ function renderPosProducts() {
         <div class="mt-3 pt-2 border-t border-slate-800/80 flex justify-between items-center"><span class="text-xs text-slate-400">Retail Rate:</span><span class="text-sm font-black text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()} ${inventoryPriceLabel(item)}</span></div>
       </button>`;
   }).join('');
+  const toggleButton = $('pos-products-toggle');
+  toggleButton.classList.toggle('hidden', items.length <= 6);
+  toggleButton.setAttribute('aria-expanded', String(showAllPosProducts));
+  toggleButton.innerText = showAllPosProducts
+    ? 'Show fewer products'
+    : `Show more products (${items.length - 6} more)`;
+}
+
+function searchPosProducts() {
+  showAllPosProducts = false;
+  renderPosProducts();
+}
+
+function togglePosProductList() {
+  showAllPosProducts = !showAllPosProducts;
+  renderPosProducts();
 }
 
 function renderInventoryCards() {

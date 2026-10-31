@@ -39,6 +39,7 @@ const SlaughterBatch = model('SlaughterBatch', new Schema({
 const PosSale = model('PosSale', new Schema({
   ...base, id: String, date: String, time: String, customer: String, customerPhone: String, itemsSummary: String,
   itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number,
+  cashReceivedRs: Number, changeRs: Number,
   loyaltyPointsEarned: Number, loyaltyPointsRedeemed: Number, loyaltyPointsBalanceAfter: Number, loyaltyFreeGiveawayKg: Number
 }, opts));
 
