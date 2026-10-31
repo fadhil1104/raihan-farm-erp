@@ -1814,7 +1814,7 @@ function updatePosCashSummary() {
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const total = Math.max(0, subtotal - discount);
   const enteredAmount = $('pos-cash-received').value.trim();
-  const cashReceived = enteredAmount === '' ? 0 : Number(enteredAmount);
+  const cashReceived = enteredAmount === '' ? total : Number(enteredAmount);
   const changeAmount = $('pos-change-amount');
   const changeLabel = $('pos-change-label');
 
@@ -1969,9 +1969,9 @@ function completePosSale() {
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
   const grandTotal = Math.max(0, subtotal - discount);
   const cashReceivedInput = $('pos-cash-received').value.trim();
-  const cashReceivedRs = payment === 'CASH' && cashReceivedInput !== ''
-    ? Number(cashReceivedInput)
-    : 0;
+  const cashReceivedRs = payment !== 'CASH'
+    ? 0
+    : cashReceivedInput === '' ? grandTotal : Number(cashReceivedInput);
   if (payment === 'CASH' && (!Number.isFinite(cashReceivedRs) || cashReceivedRs < grandTotal)) {
     return showToast(`Enter at least Rs. ${grandTotal.toLocaleString()} received from the customer.`, 'error');
   }
