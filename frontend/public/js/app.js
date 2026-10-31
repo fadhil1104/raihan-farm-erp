@@ -692,7 +692,9 @@ async function handleLogin() {
       switchTab('pos');
     }
     const box = $('login-error');
-    box.innerText = authenticated || err.offline ? err.message : 'Invalid credentials.';
+    box.innerText = err.status === 401
+      ? 'Invalid credentials.'
+      : err.message || 'Login failed. Please try again.';
     box.classList.remove('hidden');
   }
 }
