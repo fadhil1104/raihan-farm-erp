@@ -569,16 +569,20 @@
                 <h5 class="font-extrabold text-xs uppercase tracking-wider text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-boxes-stacked"></i> That Day's Inventory & Stock Movement</h5>
                 <span class="text-[11px] text-slate-400">Includes meat, packets, eggs and other inventory units</span>
               </div>
-              <p class="text-[11px] text-slate-400">For meat, expected closing = opening + slaughter received − POS sold. Red means actual stock is short; amber means extra stock. Unrecorded waste or manual stock changes will also appear as a difference.</p>
+              <p class="text-[11px] text-slate-400">For meat, expected closing = opening + slaughter received − POS sold ± recorded adjustments. Red means actual stock is short; amber means extra stock. Unrecorded waste or stock changes still appear as a difference.</p>
               <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr class="border-b border-slate-700 text-slate-400 uppercase text-[10px]">
-                      <th class="py-2 px-2">Inventory Item</th><th class="py-2 px-2 text-right">Opening</th><th class="py-2 px-2 text-right">Added / Slaughter In</th><th class="py-2 px-2 text-right">Sold (POS)</th><th class="py-2 px-2 text-right">Expected Closing</th><th class="py-2 px-2 text-right">Actual Closing</th><th class="py-2 px-2 text-right">Difference</th><th class="py-2 px-2 text-right">Rate / Unit</th>
+                      <th class="py-2 px-2">Inventory Item</th><th class="py-2 px-2 text-right">Opening</th><th class="py-2 px-2 text-right">Added / Slaughter In</th><th class="py-2 px-2 text-right">Sold (POS)</th><th class="py-2 px-2 text-right">Manual Adjustment</th><th class="py-2 px-2 text-right">Expected Closing</th><th class="py-2 px-2 text-right">Actual Closing</th><th class="py-2 px-2 text-right">Difference</th><th class="py-2 px-2 text-right">Rate / Unit</th>
                     </tr>
                   </thead>
                   <tbody id="cal-day-inventory-tbody" class="divide-y divide-slate-800/80"></tbody>
                 </table>
+              </div>
+              <div class="space-y-2 border-t border-slate-800 pt-3">
+                <h6 class="text-[11px] font-extrabold uppercase tracking-wide text-yellow-400">Manual Stock Adjustments</h6>
+                <div id="cal-day-adjustments" class="space-y-2"></div>
               </div>
             </div>
             <div id="calendar-day-sales-panel" class="lg:col-span-5 bg-slate-900/70 p-4 rounded-xl border border-slate-800 space-y-3 flex flex-col justify-between">
@@ -741,6 +745,42 @@
           <input type="number" min="0.01" step="0.01" id="new-inv-price" placeholder="Retail price per kg (Rs.)" class="px-3 py-2 rounded-lg text-sm">
           <input type="number" min="0" step="0.1" id="new-inv-min-stock" placeholder="Low-stock alert threshold (kg)" class="px-3 py-2 rounded-lg text-sm">
           <button onclick="addInventoryItem()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2 rounded-lg text-xs font-black">Add Item</button>
+        </div>
+      </div>
+      <div class="card p-5 space-y-3 border border-amber-500/30 admin-only-nav">
+        <div>
+          <h3 class="font-bold text-sm text-amber-300"><i class="fa-solid fa-scale-balanced mr-1"></i> Record Meat Stock Adjustment</h3>
+          <p class="mt-1 text-xs text-slate-400">Use this to log measured wastage, stock-count differences, or other corrections. Stock updates immediately, and the reason appears in that day’s inventory reconciliation.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <label class="text-[11px] font-semibold text-slate-400">Meat item
+            <select id="inv-adjustment-item" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold"><option value="">Loading meat items…</option></select>
+          </label>
+          <label class="text-[11px] font-semibold text-slate-400">Adjustment type
+            <select id="inv-adjustment-direction" onchange="inventoryAdjustmentDirectionChanged()" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+              <option value="DECREASE">Decrease stock (wastage / shortage)</option>
+              <option value="INCREASE">Increase stock (counted extra)</option>
+              <option value="COUNT">Set physical counted balance</option>
+            </select>
+          </label>
+          <label class="text-[11px] font-semibold text-slate-400"><span id="inv-adjustment-quantity-label">Amount (kg)</span>
+            <input id="inv-adjustment-quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 5" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+          </label>
+          <label class="text-[11px] font-semibold text-slate-400">Reason
+            <select id="inv-adjustment-reason" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+              <option value="">Select a reason</option>
+              <option value="Spoilage">Spoilage</option>
+              <option value="Trimming / waste">Trimming / waste</option>
+              <option value="Stock-count correction">Stock-count correction</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <label class="text-[11px] font-semibold text-slate-400">Note <span class="font-normal">(required for Other)</span>
+            <input id="inv-adjustment-note" type="text" maxlength="160" placeholder="Optional details" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+        </div>
+        <div class="flex justify-end">
+          <button type="button" onclick="recordInventoryAdjustment()" class="rounded-lg bg-amber-400 px-4 py-2 text-xs font-black text-slate-950 hover:bg-amber-300"><i class="fa-solid fa-clipboard-check mr-1"></i> Record Adjustment</button>
         </div>
       </div>
       <datalist id="inventory-item-name-options"></datalist>

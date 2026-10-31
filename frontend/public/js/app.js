@@ -341,6 +341,7 @@ function ensureStateCollections() {
   if (!state) return;
   if (!Array.isArray(state.customers)) state.customers = [];
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  if (!state.dailyVault || typeof state.dailyVault !== 'object') state.dailyVault = {};
 }
 
 async function flushSave() {
@@ -458,6 +459,7 @@ function syncTodayIntoDailyVault() {
     date: today,
     posSales: JSON.parse(JSON.stringify(todaysSales)),
     slaughterBatches: JSON.parse(JSON.stringify(todaysBatches)),
+    inventoryAdjustments: existingSnapshot?.inventoryAdjustments || [],
     inventorySnapshot: state.inventory.map((item) => {
       const unitType = inventoryUnit(item);
       const unitLabel = inventoryUnitLabel(item);
@@ -923,6 +925,95 @@ async function submitInventoryEdit(id) {
   showToast(`Admin updated ${item.name} immediately.`, 'success');
 }
 
+function recordInventoryAdjustment() {
+  if (currentUser?.role !== 'admin') {
+    return showToast('Only an admin can record a manual stock adjustment.', 'error');
+  }
+  const itemId = $('inv-adjustment-item').value;
+  const item = state.inventory.find((entry) => String(entry.id) === itemId);
+  const direction = $('inv-adjustment-direction').value;
+  const quantityInput = $('inv-adjustment-quantity').value.trim();
+  const quantity = Number(quantityInput);
+  const reason = $('inv-adjustment-reason').value;
+  const note = $('inv-adjustment-note').value.trim();
+  if (!item || inventoryUnit(item) !== 'kg') {
+    return showToast('Select a valid meat item for the stock adjustment.', 'error');
+  }
+  if (!['INCREASE', 'DECREASE', 'COUNT'].includes(direction) || !quantityInput || !Number.isFinite(quantity) ||
+      quantity < 0 || (direction !== 'COUNT' && quantity === 0)) {
+    return showToast(direction === 'COUNT' ? 'Enter a valid counted balance of zero or more.' : 'Enter an adjustment amount greater than zero.', 'error');
+  }
+  if (!reason || (reason === 'Other' && !note)) {
+    return showToast(reason === 'Other' ? 'Add a note when selecting Other as the reason.' : 'Select a reason for this adjustment.', 'error');
+  }
+  const enteredQuantity = +quantity.toFixed(2);
+  if (direction !== 'COUNT' && enteredQuantity <= 0) {
+    return showToast('Adjustment must be at least 0.01 kg.', 'error');
+  }
+  if (direction === 'COUNT' && enteredQuantity < 0) {
+    return showToast('Counted balance cannot be negative.', 'error');
+  }
+
+  const today = getTodayDate();
+  syncTodayIntoDailyVault();
+  const day = state.dailyVault[today];
+  if (!Array.isArray(day.inventoryAdjustments)) day.inventoryAdjustments = [];
+  const itemSnapshot = day.inventorySnapshot.find((row) => String(row.id) === String(item.id));
+  if (!itemSnapshot) {
+    return showToast('Could not prepare this item’s daily stock record. Refresh and try again.', 'error');
+  }
+  const priorAdjustmentDelta = day.inventoryAdjustments
+    .filter((entry) => String(entry.itemId) === String(item.id))
+    .reduce((total, entry) => total + Number(entry.delta ?? ((entry.direction === 'DECREASE' ? -1 : 1) * Number(entry.quantity || 0))), 0);
+  const openingStock = Number(itemSnapshot.openingStock ?? itemSnapshot.openingKg);
+  const addedStock = Number(itemSnapshot.addedStock ?? itemSnapshot.slaughterInKg);
+  const soldStock = Number(itemSnapshot.soldStock ?? itemSnapshot.soldKg);
+  if (![openingStock, addedStock, soldStock, priorAdjustmentDelta].every(Number.isFinite)) {
+    return showToast('This item’s stock movement record is incomplete. Refresh and try again.', 'error');
+  }
+  const expectedBeforeAdjustment = openingStock + addedStock - soldStock + priorAdjustmentDelta;
+  const adjustmentDelta = direction === 'COUNT'
+    ? +(enteredQuantity - expectedBeforeAdjustment).toFixed(2)
+    : direction === 'DECREASE' ? -enteredQuantity : enteredQuantity;
+  const newStock = direction === 'COUNT'
+    ? enteredQuantity
+    : +(inventoryStock(item) + adjustmentDelta).toFixed(2);
+  if (newStock < 0) {
+    return showToast(`Cannot reduce more than the available ${inventoryStockText(item, 2)}.`, 'error');
+  }
+  day.inventoryAdjustments.push({
+    id: `inventory-adjustment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    date: today,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    itemId: item.id,
+    itemName: item.name,
+    unitLabel: inventoryUnitLabel(item),
+    direction: adjustmentDelta < 0 ? 'DECREASE' : adjustmentDelta > 0 ? 'INCREASE' : 'COUNT',
+    mode: direction,
+    delta: adjustmentDelta,
+    quantity: Math.abs(adjustmentDelta),
+    ...(direction === 'COUNT' ? { countedStock: enteredQuantity } : {}),
+    reason,
+    note,
+    recordedBy: currentUser.label || currentUser.username
+  });
+  item.stockKg = +newStock.toFixed(2);
+  $('inv-adjustment-quantity').value = '';
+  $('inv-adjustment-note').value = '';
+  $('inv-adjustment-reason').value = '';
+  saveState();
+  showToast(direction === 'COUNT'
+    ? `${item.name} physical count recorded as ${enteredQuantity.toFixed(2)} kg.`
+    : `${item.name} stock ${direction === 'DECREASE' ? 'reduced' : 'increased'} by ${enteredQuantity.toFixed(2)} kg. Adjustment reason recorded.`, 'success');
+}
+
+function inventoryAdjustmentDirectionChanged() {
+  const countMode = $('inv-adjustment-direction').value === 'COUNT';
+  $('inv-adjustment-quantity-label').innerText = countMode ? 'Counted balance (kg)' : 'Amount (kg)';
+  $('inv-adjustment-quantity').placeholder = countMode ? 'Enter physical balance' : 'e.g. 5';
+  $('inv-adjustment-quantity').min = countMode ? '0' : '0.01';
+}
+
 function inventoryUnitFormChanged() {
   const unit = $('new-inv-unit').value;
   const isKg = unit === 'kg';
@@ -1161,11 +1252,18 @@ function getDayInventoryRows(snapshot, sales) {
   state.inventory.forEach(addCurrentInventoryItem);
   return [...rows.values()].map((row) => {
     if (row.unitType !== 'kg' || !row.historicalStockAvailable || !row.stockMovementAvailable) {
-      return { ...row, expectedClosingStock: null, stockVariance: null };
+      return { ...row, inventoryAdjustments: [], adjustmentQuantity: null, expectedClosingStock: null, stockVariance: null };
     }
-    const expectedClosingStock = Number(row.openingStock) + Number(row.addedStock) - Number(row.soldStock);
+    const inventoryAdjustments = (snapshot.inventoryAdjustments || [])
+      .filter((entry) => String(entry.itemId) === String(row.id));
+    const adjustmentQuantity = inventoryAdjustments.reduce((total, entry) =>
+      total + Number(entry.delta ?? ((entry.direction === 'DECREASE' ? -1 : 1) * Number(entry.quantity || 0))), 0);
+    const expectedClosingStock = Number(row.openingStock) + Number(row.addedStock)
+      - Number(row.soldStock) + adjustmentQuantity;
     return {
       ...row,
+      inventoryAdjustments,
+      adjustmentQuantity,
       expectedClosingStock,
       stockVariance: expectedClosingStock - Number(row.closingStock)
     };
@@ -1217,18 +1315,32 @@ function renderCalendarDayInspector() {
   $('calendar-day-sales-panel').classList.toggle('lg:col-span-5', !isRange);
 
   $('cal-day-inventory-tbody').innerHTML = isRange ? '' : inventoryRows.length === 0
-    ? '<tr><td colspan="8" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
+    ? '<tr><td colspan="9" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
     : inventoryRows.map((row) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td class="py-2 px-2 font-bold text-white">${esc(row.name)}${row.source ? `<span class="block text-[10px] font-normal text-slate-400">${esc(row.source)}</span>` : ''}</td>
       <td class="py-2 px-2 text-right text-slate-400">${formatMovementQuantity(row.openingStock, row.unitLabel)}</td>
       <td class="py-2 px-2 text-right font-semibold text-sky-400">${row.addedStock === null ? '—' : `+${formatMovementQuantity(row.addedStock, row.unitLabel)}`}</td>
       <td class="py-2 px-2 text-right font-semibold text-amber-400">-${formatMovementQuantity(row.soldStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-semibold ${row.adjustmentQuantity < -0.009 ? 'text-red-300' : row.adjustmentQuantity > 0.009 ? 'text-emerald-300' : 'text-slate-400'}">${row.adjustmentQuantity === null ? '—' : row.adjustmentQuantity < -0.009 ? formatMovementQuantity(row.adjustmentQuantity, row.unitLabel) : row.adjustmentQuantity > 0.009 ? `+${formatMovementQuantity(row.adjustmentQuantity, row.unitLabel)}` : '—'}</td>
       <td class="py-2 px-2 text-right font-semibold text-slate-300">${formatMovementQuantity(row.expectedClosingStock, row.unitLabel)}</td>
       <td class="py-2 px-2 text-right font-black text-emerald-400">${formatMovementQuantity(row.closingStock, row.unitLabel)}</td>
       <td class="py-2 px-2 text-right font-bold ${row.stockVariance > 0.009 ? 'text-red-400' : row.stockVariance < -0.009 ? 'text-amber-300' : 'text-emerald-400'}">${row.stockVariance === null ? '—' : row.stockVariance > 0.009 ? `Short ${formatMovementQuantity(row.stockVariance, row.unitLabel)}` : row.stockVariance < -0.009 ? `Extra ${formatMovementQuantity(-row.stockVariance, row.unitLabel)}` : 'Matches'}</td>
       <td class="py-2 px-2 text-right text-yellow-400 font-bold">${row.price === null ? '—' : `Rs. ${Number(row.price).toLocaleString()} / ${esc(row.unitLabel)}`}</td>
     </tr>`).join('');
+  const dayAdjustments = isRange ? [] : (snap.inventoryAdjustments || []);
+  $('cal-day-adjustments').innerHTML = dayAdjustments.length
+    ? dayAdjustments.slice().reverse().map((entry) => `
+      <div class="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs">
+        <div>
+          <strong class="text-white">${esc(entry.itemName)}</strong>
+          <span class="ml-1 font-bold ${entry.direction === 'DECREASE' ? 'text-red-300' : 'text-emerald-300'}">${entry.mode === 'COUNT' ? `Counted ${formatMovementQuantity(Number(entry.countedStock), entry.unitLabel || 'kg')}` : `${entry.direction === 'DECREASE' ? '−' : '+'}${formatMovementQuantity(Number(entry.quantity), entry.unitLabel || 'kg')}`}</span>
+          <span class="ml-2 text-yellow-300">${esc(entry.reason)}</span>
+          ${entry.note ? `<p class="mt-1 text-slate-300">${esc(entry.note)}</p>` : ''}
+        </div>
+        <span class="text-right text-slate-400">${esc(entry.time || '')} · ${esc(entry.recordedBy || 'Admin')}</span>
+      </div>`).join('')
+    : '<p class="text-xs text-slate-500">No manual stock adjustments recorded for this date.</p>';
 
   const salesHtml = sales.map((p) => `
     <div class="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between text-xs">
@@ -2393,6 +2505,15 @@ function renderInventoryCards() {
   const query = ($('inventory-search')?.value || '').trim().toLocaleLowerCase();
   const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const adjustmentItemSelect = $('inv-adjustment-item');
+  if (adjustmentItemSelect) {
+    const selectedItemId = adjustmentItemSelect.value;
+    const meatItems = state.inventory.filter((item) => inventoryUnit(item) === 'kg');
+    adjustmentItemSelect.innerHTML = meatItems.length
+      ? meatItems.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} (${inventoryStockText(item, 2)} available)</option>`).join('')
+      : '<option value="">No kg-based meat inventory</option>';
+    if (meatItems.some((item) => String(item.id) === selectedItemId)) adjustmentItemSelect.value = selectedItemId;
+  }
   $('inventory-cards-container').innerHTML = state.inventory.length === 0
     ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items have been added yet.</div>'
     : items.length === 0
