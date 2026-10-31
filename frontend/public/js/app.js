@@ -604,6 +604,35 @@ function openLoginModal() {
 }
 function closeLoginModal() { if (currentUser) $('login-modal').classList.add('hidden'); }
 
+async function closeShopAndLogout() {
+  if (!currentUser) return openLoginModal();
+  if (pendingReceiptRedemptionSaleId) {
+    return showToast('Print the open receipt and complete its loyalty redemption before closing the shop.', 'error');
+  }
+  const confirmed = confirm(
+    'Close the shop on this terminal and log out?\n\n' +
+    'Any unsubmitted customer bill will be discarded. Completed sales and backups stay saved in the database and remain available through the POS history filters. The POS sales summary will open on tomorrow’s date the next time you sign in.'
+  );
+  if (!confirmed) return;
+
+  posCart = [];
+  selectedPosCategoryId = null;
+  showAllPosProducts = false;
+  ['pos-product-search', 'pos-weight-input', 'pos-quantity-input', 'pos-cust-phone',
+    'pos-cust-name', 'pos-cash-received'].forEach((id) => { if ($(id)) $(id).value = ''; });
+  $('pos-discount').value = '0';
+  $('pos-customer-status').innerText = '';
+  $('pos-pay-method').value = 'CASH';
+  pendingPosSale = null;
+  posIncomePeriod = 'DATE';
+  posIncomeDate = getTomorrowDate();
+  renderPosProducts();
+  renderPosCart();
+  updatePosCashPayment();
+  renderPosSalesHistory();
+  await logout();
+}
+
 async function logout() {
   if (!currentUser) return openLoginModal();
 
@@ -1123,6 +1152,34 @@ function recordInventoryAdjustment() {
     : `${item.name} stock ${direction === 'DECREASE' ? 'reduced' : 'increased'} by ${enteredQuantity.toFixed(2)} kg. Adjustment reason recorded.`, 'success');
 }
 
+function renderInventoryAdjustmentHistory() {
+  const historyEl = $('inv-adjustment-history');
+  if (!historyEl || !state) return;
+  const dateInput = $('inv-adjustment-history-date');
+  if (dateInput && !dateInput.value) dateInput.value = getTodayDate();
+  const date = dateInput?.value || getTodayDate();
+  const adjustments = Array.isArray(state.dailyVault?.[date]?.inventoryAdjustments)
+    ? state.dailyVault[date].inventoryAdjustments : [];
+  historyEl.innerHTML = adjustments.length
+    ? adjustments.slice().reverse().map((entry) => {
+      const direction = entry.direction === 'DECREASE' ? 'DECREASE' : entry.direction === 'INCREASE' ? 'INCREASE' : 'COUNT';
+      const deltaText = entry.mode === 'COUNT'
+        ? `Counted ${formatMovementQuantity(Number(entry.countedStock ?? 0), entry.unitLabel || 'kg')}`
+        : `${direction === 'DECREASE' ? '−' : '+'}${formatMovementQuantity(Number(entry.quantity), entry.unitLabel || 'kg')}`;
+      const color = direction === 'DECREASE' ? 'text-red-300' : 'text-emerald-300';
+      return `<div class="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs">
+        <div>
+          <strong class="text-white">${esc(entry.itemName || 'Inventory item')}</strong>
+          <span class="ml-1 font-bold ${color}">${esc(deltaText)}</span>
+          <span class="ml-2 text-yellow-300">${esc(entry.reason || 'Adjustment')}</span>
+          ${entry.note ? `<p class="mt-1 text-slate-300">${esc(entry.note)}</p>` : ''}
+        </div>
+        <span class="text-right text-slate-400">${esc(entry.time || '')} · ${esc(entry.recordedBy || 'Staff')}</span>
+      </div>`;
+    }).join('')
+    : `<p class="text-xs text-slate-500">No stock adjustments recorded for ${esc(date)}.</p>`;
+}
+
 function inventoryAdjustmentDirectionChanged() {
   const countMode = $('inv-adjustment-direction').value === 'COUNT';
   $('inv-adjustment-quantity-label').innerText = countMode ? 'Counted balance (kg)' : 'Amount (kg)';
@@ -1578,6 +1635,32 @@ function renderAnnualAnalytics() {
 
   const f = filterEl.value;
   const rows = f === 'ALL' ? sourceRows : f.startsWith('YEAR-') ? sourceRows.filter((r) => r.year === f.replace('YEAR-', '')) : sourceRows.filter((r) => r.label === f);
+  const receivablesForPeriod = (state.receivablesList || []).filter((receivable) => {
+    const date = String(receivable.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    return rows.some((row) => {
+      if (archiveGranularity === 'YEARLY') return date.startsWith(String(row.year || ''));
+      if (archiveGranularity === 'WEEKLY') {
+        const label = String(row.week || row.label || '');
+        const dates = label.match(/\d{4}-\d{2}-\d{2}/g);
+        if (dates?.length >= 2) return date >= dates[0] && date <= dates[1];
+        const isoWeek = label.match(/(\d{4})-?W(\d{1,2})/i);
+        if (isoWeek) {
+          const jan4 = new Date(Date.UTC(Number(isoWeek[1]), 0, 4));
+          const monday = new Date(jan4);
+          monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (Number(isoWeek[2]) - 1) * 7);
+          const weekStart = monday.toISOString().slice(0, 10);
+          const sunday = new Date(monday);
+          sunday.setUTCDate(monday.getUTCDate() + 6);
+          return date >= weekStart && date <= sunday.toISOString().slice(0, 10);
+        }
+        return false;
+      }
+      const month = monthKey(row);
+      return month ? date.slice(0, 7) === month : false;
+    });
+  });
+  const pendingForPeriod = receivablesForPeriod.filter((receivable) => receivable.status === 'Pending');
 
   let sumGross = 0, sumCollected = 0, sumKg = 0;
   $('annual-monthly-tbody').innerHTML = rows.length === 0
@@ -1599,12 +1682,13 @@ function renderAnnualAnalytics() {
       </tr>`;
   }).join('');
 
-  const pending = state.receivablesList.filter((r) => r.status === 'Pending');
-  const pendingTotal = pending.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const pendingTotal = pendingForPeriod.reduce((sum, receivable) => sum + Number(receivable.amount || 0), 0);
   $('yr-kpi-sales').innerText = rows.length ? `Rs. ${sumGross.toLocaleString()}` : '—';
   $('yr-kpi-collected').innerText = rows.length ? `Rs. ${sumCollected.toLocaleString()}` : '—';
-  $('yr-kpi-receivables').innerText = state.receivablesList.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
-  $('yr-kpi-rec-count').innerText = state.receivablesList.length ? `${pending.length} pending hotel/customer accounts` : 'No receivables recorded';
+  $('yr-kpi-receivables').innerText = receivablesForPeriod.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
+  $('yr-kpi-rec-count').innerText = receivablesForPeriod.length
+    ? `${pendingForPeriod.length} pending hotel/customer accounts in selected period`
+    : 'No receivables in selected period';
   $('yr-kpi-kg').innerText = rows.length ? `${sumKg.toLocaleString()} kg` : '—';
   const snapshotCount = Object.keys(state.dailyVault || {}).length;
   const periodCount = monthlySourceRows.length + state.weeklyHistory.length;
@@ -1628,12 +1712,13 @@ function renderAnnualAnalytics() {
     </tr>`).join('');
 
   // printable statement
+  const selectedPeriodLabel = f === 'ALL' ? 'All available periods' : f.replace(/^YEAR-/, 'Year ');
   $('ar-date').innerText = archiveDateRange
-    ? `${getTodayDate()} (Selected Date Range: ${archiveDateRange.from} to ${archiveDateRange.to})`
-    : `${getTodayDate()} (Selected Calendar Date: ${selectedArchiveDate})`;
+    ? `${getTodayDate()} (Selected Date Range: ${archiveDateRange.from} to ${archiveDateRange.to}; Sales Filter: ${selectedPeriodLabel})`
+    : `${getTodayDate()} (Selected Period: ${selectedPeriodLabel}; Calendar Date: ${selectedArchiveDate})`;
   $('ar-total-sales').innerText = rows.length ? `Rs. ${sumGross.toLocaleString()}` : '—';
   $('ar-total-collected').innerText = rows.length ? `Rs. ${sumCollected.toLocaleString()}` : '—';
-  $('ar-total-receivables').innerText = state.receivablesList.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
+  $('ar-total-receivables').innerText = receivablesForPeriod.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
   $('ar-total-kg').innerText = rows.length ? `${sumKg.toLocaleString()} kg` : '—';
   $('ar-monthly-tbody').innerHTML = rows.length === 0
     ? '<tr><td colspan="7" class="py-4 text-center text-slate-500">No historical sales recorded.</td></tr>'
@@ -1707,7 +1792,7 @@ function renderAnnualAnalytics() {
         : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No inventory items recorded for this date.</td></tr>'}</tbody>
     </table>`}`;
 
-  $('ar-receivables-tbody').innerHTML = state.receivablesList.map((r) => `
+  $('ar-receivables-tbody').innerHTML = receivablesForPeriod.length ? receivablesForPeriod.map((r) => `
     <tr>
       <td class="py-1.5 px-2 border border-slate-300 font-mono">${esc(r.id)} (${esc(r.date)})</td>
       <td class="py-1.5 px-2 border border-slate-300 font-bold">${esc(r.customer)}</td>
@@ -1715,7 +1800,8 @@ function renderAnnualAnalytics() {
       <td class="py-1.5 px-2 border border-slate-300">${esc(r.details)}</td>
       <td class="py-1.5 px-2 border border-slate-300 text-right font-bold">Rs. ${r.amount.toLocaleString()}</td>
       <td class="py-1.5 px-2 border border-slate-300 font-semibold">${esc(r.status)}</td>
-    </tr>`).join('');
+    </tr>`).join('')
+    : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No receivables recorded in the selected period.</td></tr>';
 }
 
 // ---------- MODULE 4: POS ----------
@@ -3026,6 +3112,7 @@ function renderAll() {
   renderCOA();
 
   renderInventoryCards();
+  renderInventoryAdjustmentHistory();
 
   // POS
   if (!state.inventory.some((item) => item.id === selectedPosCategoryId)) selectedPosCategoryId = null;
