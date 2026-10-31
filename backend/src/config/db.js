@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { randomInt } = require('node:crypto');
 
 let staffMigration;
 
@@ -29,6 +30,54 @@ async function migrateLegacyEmployeeData() {
       { employeeId: { $exists: true }, staffId: { $exists: true } },
       { $unset: { employeeId: '' } }
     );
+
+    const staffCollection = db.collection('staffs');
+    const staffRows = await staffCollection.find({}, { projection: { id: 1 } }).toArray();
+    const staffIds = new Set(staffRows.map(({ id }) => Number(id)).filter(Number.isSafeInteger));
+    const allStaffUsers = await users.find({ role: { $ne: 'admin' } }).toArray();
+    const largestKnownId = allStaffUsers.reduce(
+      (largest, user) => Math.max(largest, Number(user.staffId) || 0),
+      [...staffIds].reduce((largest, id) => Math.max(largest, id), 0)
+    );
+    let nextStaffId = largestKnownId + 1;
+    let sequence = await staffCollection.countDocuments();
+
+    for (const user of allStaffUsers) {
+      let staffId = Number(user.staffId);
+      if (!Number.isSafeInteger(staffId) || staffId <= 0) {
+        while (staffIds.has(nextStaffId)) nextStaffId += 1;
+        staffId = nextStaffId;
+        nextStaffId += 1;
+        await users.updateOne({ _id: user._id }, { $set: { staffId } });
+      }
+
+      const name = String(user.label || user.username || 'Staff').trim();
+      const staff = await staffCollection.findOne({ id: staffId });
+      if (staff) continue;
+
+      await staffCollection.updateOne(
+        { uid: String(staffId) },
+        {
+          $setOnInsert: {
+            uid: String(staffId),
+            seq: sequence++,
+            id: staffId,
+            name,
+            phone: user.username,
+            role: 'Staff',
+            pin: String(randomInt(1000, 10000)),
+            baseSalary: 48000,
+            otRate: 350,
+            allowance: 6000,
+            advance: 0,
+            clockedIn: false,
+            lastClockIn: null
+          }
+        },
+        { upsert: true }
+      );
+      staffIds.add(staffId);
+    }
   }
 
   if (names.has('attendancelogs')) {

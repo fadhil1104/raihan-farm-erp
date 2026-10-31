@@ -45,7 +45,8 @@ On first backend start, only the admin account from `ADMIN_USERNAME` and
 `ADMIN_PASSWORD` is created. Passwords are stored as bcrypt hashes. Existing MongoDB
 records are not automatically deleted, except that existing employee records and
 their user/attendance references are migrated to staff and the legacy `employees`
-collection is dropped on backend startup.
+collection is dropped on backend startup. Non-admin user accounts without a staff
+record are also added to `staffs` with the default payroll settings.
 
 ## Docker
 
