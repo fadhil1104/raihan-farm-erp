@@ -565,6 +565,35 @@ function openLoginModal() {
 }
 function closeLoginModal() { if (currentUser) $('login-modal').classList.add('hidden'); }
 
+async function logout() {
+  if (!currentUser) return openLoginModal();
+
+  await flushNow();
+  if (savePending || saveInFlight) {
+    return showToast('Could not save your latest changes. Please check the connection and try logging out again.', 'error');
+  }
+
+  clearTimeout(saveTimer);
+  Api.clearToken();
+  currentUser = null;
+  state = null;
+  posCart = [];
+  pendingPosSale = null;
+  pendingReceiptRedemptionSaleId = null;
+  activeReceiptPrintSaleId = null;
+  savePending = false;
+  saveInFlight = false;
+  stateVersion = 0;
+  $('receipt-modal').classList.add('hidden');
+  $('mobile-qr-modal').classList.add('hidden');
+  $('login-username').value = '';
+  $('login-password').value = '';
+  updateRoleSidebar();
+  switchTab('pos');
+  openLoginModal();
+  showToast('You have been logged out.', 'info');
+}
+
 async function handleLogin() {
   const u = $('login-username').value.trim();
   const p = $('login-password').value;
