@@ -20,8 +20,10 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 @media print {
   body * { visibility: hidden; }
   .printable-active, .printable-active * { visibility: visible; }
+  #root *:not(.printable-active):not(.printable-active *):not(:has(.printable-active)) { display: none !important; }
   .printable-active { position: absolute; left: 0; top: 0; width: 100%; background: white !important; color: black !important; padding: 20px !important; border: none !important; box-shadow: none !important; }
   .no-print { display: none !important; }
+  #receipt-modal, #receipt-modal > div { position: static !important; display: contents !important; }
   .printable-active#receipt-print-area {
     box-sizing: border-box;
     width: 80mm;
@@ -31,6 +33,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     background: white !important;
     color: black !important;
     font: 10px/1.35 monospace;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
   .printable-active#receipt-print-area #rc-items > div { break-inside: avoid; page-break-inside: avoid; }
   .printable-active#pos-income-summary, .printable-active#pos-income-summary * {

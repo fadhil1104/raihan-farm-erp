@@ -55,6 +55,8 @@ let pendingReceiptRedemptionSaleId = null;
 let activeReceiptPrintSaleId = null;
 let receiptPrintStyle = null;
 let receiptPrintOriginalStyle = null;
+const LOYALTY_POINTS_PER_REWARD = 50;
+const LOYALTY_REWARD_KG = 0.5;
 let posIncomePeriod = 'DAY';
 let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
@@ -269,80 +271,43 @@ function printPosDetailed() {
 }
 function printPosSummary() {
   const sales = getPosIncomeSales();
-  const customerGroups = new Map();
   const productGroups = new Map();
   sales.forEach((sale) => {
     const phone = phoneKey(sale.customerPhone);
     const loyalty = phone.length >= 7 && (state.customers || [])
       .some((customer) => phoneKey(customer.phone) === phone);
-    const name = sale.customer || 'Walk-in Customer';
-    const key = phone.length >= 7 ? `phone:${phone}` : `walk-in:${name.toLocaleLowerCase()}`;
-    if (!customerGroups.has(key)) {
-      customerGroups.set(key, { name, phone: sale.customerPhone || '', loyalty, sales: [], total: 0 });
-    }
-    const customer = customerGroups.get(key);
-    customer.sales.push(sale);
-    customer.total += Number(sale.totalRs || 0);
 
     if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
       sale.itemsDetails.forEach((item) => {
         const productKey = `${item.id || item.name}:${item.isLoyaltyFreeGiveaway ? 'loyalty-giveaway' : 'sale'}`;
         if (!productGroups.has(productKey)) {
           productGroups.set(productKey, {
-            name: item.name || 'Product', quantity: 0, unit: item.unitLabel || item.unitType || 'unit',
-            total: 0, isLoyaltyFreeGiveaway: Boolean(item.isLoyaltyFreeGiveaway)
+            name: item.name || 'Product', walkInQuantity: 0, loyaltyQuantity: 0,
+            unit: item.unitLabel || item.unitType || 'unit', total: 0
           });
         }
         const product = productGroups.get(productKey);
-        product.quantity += Number(item.quantity || 0);
+        product[loyalty ? 'loyaltyQuantity' : 'walkInQuantity'] += Number(item.quantity || 0);
         product.total += Number(item.lineTotal || 0);
       });
     } else {
       const keyWithoutDetails = `other:${sale.itemsSummary || 'Item details unavailable'}`;
       if (!productGroups.has(keyWithoutDetails)) {
-        productGroups.set(keyWithoutDetails, { name: sale.itemsSummary || 'Item details unavailable', quantity: 0, unit: 'details unavailable', total: 0 });
+        productGroups.set(keyWithoutDetails, {
+          name: sale.itemsSummary || 'Item details unavailable',
+          walkInQuantity: 0, loyaltyQuantity: 0, unit: '', total: 0
+        });
       }
       productGroups.get(keyWithoutDetails).total += Number(sale.totalRs || 0);
     }
   });
-  const groups = [...customerGroups.values()];
-  const walkIns = groups.filter((customer) => !customer.loyalty);
-  const loyaltyCustomers = groups.filter((customer) => customer.loyalty);
-  const total = sales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
-  const periodLabel = $('pos-income-period-label').innerText.replace(' — Total Collected', '');
-  const renderCustomers = (customers) => customers.length ? customers.map((customer) => {
-    const items = customer.sales.map(posSaleItemsText).filter(Boolean).join('; ');
-    const lastSale = customer.sales.reduce((latest, sale) => sale.date > latest ? sale.date : latest, '');
-    return `<tr>
-      <td>${esc(customer.name)}</td><td>${esc(customer.phone || 'Walk-in')}</td>
-      <td>${customer.sales.length}</td><td>${esc(lastSale)}</td><td>${esc(items || '—')}</td>
-      <td class="text-right">Rs. ${customer.total.toLocaleString()}</td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="6" class="text-center">No customers in this period.</td></tr>';
   $('pos-summary-print-area').innerHTML = `
-    <header class="pos-print-header">
-      <h1>Raihan Farm Shop — POS Sales Summary</h1>
-      <p>${esc(periodLabel)} · Printed ${esc(new Date().toLocaleString())}</p>
-      <p>${sales.length} sales · ${walkIns.length} walk-in customers · ${loyaltyCustomers.length} loyalty customers · Total Rs. ${total.toLocaleString()}</p>
-    </header>
-    <h2>Walk-in Customers (${walkIns.length}) · Total Rs. ${walkIns.reduce((sum, customer) => sum + customer.total, 0).toLocaleString()}</h2>
-    <table><thead><tr><th>Customer</th><th>Phone</th><th>Bills</th><th>Last Sale</th><th>Products & Sale Details</th><th>Total</th></tr></thead><tbody>${renderCustomers(walkIns)}</tbody></table>
-    <h2>Loyalty Customers (${loyaltyCustomers.length}) · Total Rs. ${loyaltyCustomers.reduce((sum, customer) => sum + customer.total, 0).toLocaleString()}</h2>
-    <table><thead><tr><th>Customer</th><th>Phone</th><th>Bills</th><th>Last Sale</th><th>Products & Sale Details</th><th>Total</th></tr></thead><tbody>${renderCustomers(loyaltyCustomers)}</tbody></table>
-    <h2>Products Sold (${productGroups.size})</h2>
-    <table><thead><tr><th>Product</th><th>Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
-      `<tr><td>${esc(product.name)}</td><td>${product.quantity ? `${product.quantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>${product.isLoyaltyFreeGiveaway ? 'FREE — LOYALTY GIVEAWAY' : `Rs. ${product.total.toLocaleString()}`}</td></tr>`
-    ).join('') || '<tr><td colspan="3" class="text-center">No product sales in this period.</td></tr>'}</tbody>
-      <tfoot><tr><th colspan="2">Overall Sales Total</th><th>Rs. ${total.toLocaleString()}</th></tr></tfoot>
+    <table><thead><tr><th>Product</th><th>Walk-in Customer Quantity</th><th>Loyalty Customer Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
+      `<tr><td>${esc(product.name)}</td><td>${product.walkInQuantity ? `${product.walkInQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>${product.loyaltyQuantity ? `${product.loyaltyQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>Rs. ${product.total.toLocaleString()}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="text-center">No product sales in this period.</td></tr>'}</tbody>
     </table>`;
   closePosPrintOptions();
   printSection('pos-summary-print-area');
-}
-
-function posSaleItemsText(sale) {
-  return Array.isArray(sale.itemsDetails) && sale.itemsDetails.length
-    ? sale.itemsDetails.map((item) => `${item.name || 'Product'} × ${Number(item.quantity || 0).toLocaleString()} ${item.unitLabel || item.unitType || 'unit'} (${item.isLoyaltyFreeGiveaway ? 'FREE — LOYALTY GIVEAWAY' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`})`).join(', ')
-    : (sale.itemsSummary || '');
 }
 
 // ---------- server sync ----------
@@ -1605,17 +1570,18 @@ function getPosLoyaltyPlan(itemsDetails, customerRecord, loyaltyEnabled = true) 
     ? itemsDetails.filter((item) => String(item.id) === String(chicken.id) && !item.isLoyaltyFreeGiveaway)
       .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
     : 0;
-  const giveawaysAlreadyAdded = chicken
+  const giveawaysAlreadyAddedKg = chicken
     ? itemsDetails.filter((item) => String(item.id) === String(chicken.id) && item.isLoyaltyFreeGiveaway)
       .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
     : 0;
+  const giveawaysAlreadyAdded = Math.floor((giveawaysAlreadyAddedKg + 0.0000001) / LOYALTY_REWARD_KG);
 
   return {
     pointsEarned,
     pointsAvailable,
     loyaltyKgRemainderAfter,
     giveawaysAlreadyAdded,
-    chickenStockAvailable: chicken ? Math.max(0, inventoryStock(chicken) - chickenPurchasedKg - giveawaysAlreadyAdded) : 0,
+    chickenStockAvailable: chicken ? Math.max(0, inventoryStock(chicken) - chickenPurchasedKg - giveawaysAlreadyAddedKg) : 0,
     chicken
   };
 }
@@ -1627,23 +1593,23 @@ function updatePosLoyaltySummary() {
   const customerRecord = getPosLoyaltyCustomer(phone);
   const key = phoneKey(phone);
   if (key.length < 7) {
-    summary.innerText = 'Enter a customer phone number to track points. Earn 1 point per 1 kg of meat; 100 points = 1 kg Chicken free.';
+    summary.innerText = 'Enter a customer phone number to track points. Earn 1 point per 1 kg of meat; 50 points = 500 g Chicken free.';
     return;
   }
 
   const basketItems = posCart.map((item) => ({ ...item }));
   const plan = getPosLoyaltyPlan(basketItems, customerRecord);
   const currentPoints = Math.max(0, Number(customerRecord?.loyaltyPoints || 0));
-  const rewardsAvailable = Math.floor(plan.pointsAvailable / 100);
-  const chickenAvailable = Math.floor(plan.chickenStockAvailable + 0.0000001);
+  const rewardsAvailable = Math.floor(plan.pointsAvailable / LOYALTY_POINTS_PER_REWARD);
+  const chickenAvailable = Math.floor((plan.chickenStockAvailable + 0.0000001) / LOYALTY_REWARD_KG);
   const canAddReward = rewardsAvailable > plan.giveawaysAlreadyAdded && chickenAvailable > 0;
   const customerLabel = customerRecord ? `${currentPoints} point${currentPoints === 1 ? '' : 's'} balance`
     : 'New loyalty customer • 0 points';
   const earnedLabel = plan.pointsEarned
     ? `This bill earns ${plan.pointsEarned} point${plan.pointsEarned === 1 ? '' : 's'}.`
     : 'Add 1 kg of meat to earn 1 point.';
-  let rewardLabel = ` ${100 - (plan.pointsAvailable % 100)} more point${100 - (plan.pointsAvailable % 100) === 1 ? '' : 's'} to a free 1 kg Chicken reward.`;
-  if (plan.pointsAvailable >= 100) {
+  let rewardLabel = ` ${LOYALTY_POINTS_PER_REWARD - (plan.pointsAvailable % LOYALTY_POINTS_PER_REWARD)} more point${LOYALTY_POINTS_PER_REWARD - (plan.pointsAvailable % LOYALTY_POINTS_PER_REWARD) === 1 ? '' : 's'} to a free 500 g Chicken reward.`;
+  if (plan.pointsAvailable >= LOYALTY_POINTS_PER_REWARD) {
     rewardLabel = canAddReward
       ? ` ${rewardsAvailable - plan.giveawaysAlreadyAdded} free Chicken reward${rewardsAvailable - plan.giveawaysAlreadyAdded === 1 ? '' : 's'} available.`
       : chickenAvailable < 1
@@ -1651,9 +1617,9 @@ function updatePosLoyaltySummary() {
         : ' Your available free Chicken reward is already on this bill.';
   }
   const prompt = canAddReward
-    ? '<button type="button" onclick="addPosLoyaltyGiveaway()" class="mt-2 block rounded-lg bg-emerald-400 px-3 py-1.5 font-bold text-slate-950 hover:bg-emerald-300">Add 1 kg Chicken Loyalty Free Giveaway (100 points)</button>'
+    ? '<button type="button" onclick="addPosLoyaltyGiveaway()" class="mt-2 block rounded-lg bg-emerald-400 px-3 py-1.5 font-bold text-slate-950 hover:bg-emerald-300">Add 500 g Chicken Loyalty Free Giveaway (50 points)</button>'
     : '';
-  summary.innerHTML = `${esc(customerLabel)}. ${esc(earnedLabel)} 100 points = 1 kg Chicken free.${esc(rewardLabel)}${prompt}`;
+  summary.innerHTML = `${esc(customerLabel)}. ${esc(earnedLabel)} 50 points = 500 g Chicken free.${esc(rewardLabel)}${prompt}`;
 }
 
 function addPosLoyaltyGiveaway() {
@@ -1662,20 +1628,20 @@ function addPosLoyaltyGiveaway() {
     return showToast('Enter the loyalty customer phone number before adding a reward.', 'error');
   }
   const plan = getPosLoyaltyPlan(posCart, customerRecord);
-  if (plan.pointsAvailable < (plan.giveawaysAlreadyAdded + 1) * 100) {
-    return showToast('The customer needs 100 available points for each 1 kg Chicken reward.', 'error');
+  if (plan.pointsAvailable < (plan.giveawaysAlreadyAdded + 1) * LOYALTY_POINTS_PER_REWARD) {
+    return showToast('The customer needs 50 available points for each 500 g Chicken reward.', 'error');
   }
-  if (!plan.chicken || plan.chickenStockAvailable < 1) {
+  if (!plan.chicken || plan.chickenStockAvailable < LOYALTY_REWARD_KG) {
     return showToast('There is not enough Chicken stock to add the loyalty giveaway.', 'error');
   }
   const chicken = plan.chicken;
   posCart.push({
     id: chicken.id, name: `${chicken.name} - Loyalty Free Giveaway`,
-    unitType: 'kg', quantity: 1, packWeightGrams: 0,
+    unitType: 'kg', quantity: LOYALTY_REWARD_KG, packWeightGrams: 0,
     unitPrice: inventoryPrice(chicken), lineTotal: 0, isLoyaltyFreeGiveaway: true
   });
   renderPosCart();
-  showToast('Added 1 kg Chicken Loyalty Free Giveaway to the bill.', 'success');
+  showToast('Added 500 g Chicken Loyalty Free Giveaway to the bill.', 'success');
 }
 
 function lookupPosCustomer() {
@@ -1736,7 +1702,9 @@ function completePosSale() {
   const loyaltyPlan = getPosLoyaltyPlan(itemsDetails, customerRecord, customerPhoneKey.length >= 7);
   const loyaltyGiveawayKg = posCart.filter((item) => item.isLoyaltyFreeGiveaway && item.unitType === 'kg')
     .reduce((sum, item) => sum + item.quantity, 0);
-  const loyaltyPointsRedeemed = customerPhoneKey.length >= 7 ? loyaltyGiveawayKg * 100 : 0;
+  const loyaltyPointsRedeemed = customerPhoneKey.length >= 7
+    ? Math.round(loyaltyGiveawayKg / LOYALTY_REWARD_KG) * LOYALTY_POINTS_PER_REWARD
+    : 0;
   if (loyaltyPointsRedeemed > loyaltyPlan.pointsAvailable) {
     return showToast('The customer does not have enough loyalty points for the selected giveaway.', 'error');
   }
@@ -1785,8 +1753,8 @@ function renderPosSaleReceipt(sale) {
     ? `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} will be redeemed after printing • ${Number(sale.loyaltyPointsBalanceAfter || 0) + Number(sale.loyaltyPointsRedeemed || 0)} current points`
     : 'Add a customer phone number to earn points.';
   $('rc-loyalty-giveaway').innerText = sale.loyaltyFreeGiveawayKg
-    ? `${sale.loyaltyFreeGiveawayKg} kg Chicken — Loyalty Free Giveaway. Points will reset after printing.`
-    : '100 points = 1 kg Chicken free';
+    ? `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. Points will reset after printing.`
+    : '50 points = 500 g Chicken free';
 }
 
 function editPosBill() {
@@ -1896,7 +1864,7 @@ function finalizeLoyaltyRedemptionAfterPrint(saleId) {
   pendingReceiptRedemptionSaleId = null;
   $('receipt-close-button').classList.remove('hidden');
   $('rc-loyalty').innerText = `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} redeemed • ${customer.loyaltyPoints} points remaining`;
-  $('rc-loyalty-giveaway').innerText = `${sale.loyaltyFreeGiveawayKg} kg Chicken — Loyalty Free Giveaway. Points redeemed after printing.`;
+  $('rc-loyalty-giveaway').innerText = `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. Points redeemed after printing.`;
   saveState();
   showToast(`${sale.loyaltyPointsRedeemed} loyalty points redeemed after printing the receipt.`, 'success');
 }
