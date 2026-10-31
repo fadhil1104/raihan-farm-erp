@@ -196,7 +196,7 @@ async function deletePosSale(saleId) {
 function posSaleItemsHtml(sale) {
   if (!Array.isArray(sale.itemsDetails) || sale.itemsDetails.length === 0) return esc(sale.itemsSummary || 'Item details unavailable');
   return sale.itemsDetails.map((item) =>
-    `<div>${esc(item.name)} — ${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || 'unit')} · ${item.isLoyaltyFreeGiveaway ? 'FREE — LOYALTY GIVEAWAY' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`}</div>`
+    `<div>${esc(item.name)}${item.isPieces ? ' — Pieces' : ''} — ${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || 'unit')} · ${item.isLoyaltyFreeGiveaway ? 'FREE — LOYALTY GIVEAWAY' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`}</div>`
   ).join('');
 }
 
@@ -303,10 +303,10 @@ function printPosSummary() {
 
     if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
       sale.itemsDetails.forEach((item) => {
-        const productKey = `${item.id || item.name}:${item.isLoyaltyFreeGiveaway ? 'loyalty-giveaway' : 'sale'}`;
+        const productKey = `${item.id || item.name}:${item.isLoyaltyFreeGiveaway ? 'loyalty-giveaway' : item.isPieces ? 'pieces' : 'sale'}`;
         if (!productGroups.has(productKey)) {
           productGroups.set(productKey, {
-            name: item.name || 'Product', walkInQuantity: 0, loyaltyQuantity: 0,
+            name: `${item.name || 'Product'}${item.isPieces ? ' — Pieces' : ''}`, walkInQuantity: 0, loyaltyQuantity: 0,
             unit: item.unitLabel || item.unitType || 'unit', total: 0
           });
         }
@@ -1676,12 +1676,33 @@ function renderAnnualAnalytics() {
 }
 
 // ---------- MODULE 4: POS ----------
+const PIECES_PRICE_INCREASE_PER_KG = 200;
+
+function supportsChickenCutOption(item) {
+  if (!item || inventoryUnit(item) !== 'kg') return false;
+  const name = String(item.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return ['broiler chicken', 'curry chicken', 'parent chicken', 'parents chicken', 'parant chicken'].includes(name);
+}
+
+function isPiecesOptionSelected() {
+  return $('pos-chicken-cut-options')?.classList.contains('hidden') === false
+    && document.querySelector('input[name="pos-chicken-cut"]:checked')?.value === 'pieces';
+}
+
+function selectedPosUnitPrice(item) {
+  return inventoryPrice(item) + (supportsChickenCutOption(item) && isPiecesOptionSelected()
+    ? PIECES_PRICE_INCREASE_PER_KG : 0);
+}
+
 function selectPosProduct(id) {
   const item = state.inventory.find((entry) => entry.id === id);
   if (!item) return;
   selectedPosCategoryId = id;
   const unit = inventoryUnit(item);
   const isKg = unit === 'kg';
+  $('pos-chicken-cut-options').classList.toggle('hidden', !supportsChickenCutOption(item));
+  const wholeOption = document.querySelector('input[name="pos-chicken-cut"][value="whole"]');
+  if (wholeOption) wholeOption.checked = true;
   $('pos-selected-label').innerText = `Selected: ${item.name} (Rs. ${inventoryPrice(item)} ${inventoryPriceLabel(item)})`;
   $('pos-quantity-title').innerText = isKg ? '2. Enter Scale Weight (kg) & Add to Bill' : '2. Enter Whole Quantity & Add to Bill';
   $('pos-kg-presets').classList.toggle('hidden', !isKg);
@@ -1706,10 +1727,12 @@ function updatePosLinePreview() {
     $('pos-unit-line-preview').innerText = '—';
     return;
   }
+  const unitPrice = selectedPosUnitPrice(item);
+  $('pos-selected-label').innerText = `Selected: ${item.name}${isPiecesOptionSelected() ? ' — Pieces' : ''} (Rs. ${unitPrice} ${inventoryPriceLabel(item)})`;
   if (inventoryUnit(item) === 'kg') {
-    $('pos-line-preview').innerText = `Rs. ${Math.round((Number($('pos-weight-input').value) || 0) * inventoryPrice(item)).toLocaleString()}`;
+    $('pos-line-preview').innerText = `Rs. ${Math.round((Number($('pos-weight-input').value) || 0) * unitPrice).toLocaleString()}`;
   } else {
-    $('pos-unit-line-preview').innerText = `Rs. ${Math.round((Number($('pos-quantity-input').value) || 0) * inventoryPrice(item)).toLocaleString()}`;
+    $('pos-unit-line-preview').innerText = `Rs. ${Math.round((Number($('pos-quantity-input').value) || 0) * unitPrice).toLocaleString()}`;
   }
 }
 
@@ -1728,16 +1751,18 @@ function addItemToPosCart() {
     return showToast(`Not enough stock! Available: ${inventoryStockText(item, unit === 'kg' ? 2 : 0)}`, 'error');
   }
 
-  const existing = posCart.find((c) => c.id === item.id);
+  const isPieces = supportsChickenCutOption(item) && isPiecesOptionSelected();
+  const unitPrice = inventoryPrice(item) + (isPieces ? PIECES_PRICE_INCREASE_PER_KG : 0);
+  const existing = posCart.find((c) => c.id === item.id && Boolean(c.isPieces) === isPieces && !c.isLoyaltyFreeGiveaway);
   if (existing) {
     existing.quantity = unit === 'kg' ? +(existing.quantity + quantity).toFixed(2) : existing.quantity + quantity;
     existing.lineTotal = Math.round(existing.quantity * existing.unitPrice);
   } else {
     posCart.push({
-      id: item.id, name: item.name, unitType: unit,
+      id: item.id, name: item.name, unitType: unit, ...(isPieces ? { isPieces: true } : {}),
       quantity: unit === 'kg' ? +quantity.toFixed(2) : quantity,
       packWeightGrams: Number(item.packWeightGrams || 0),
-      unitPrice: inventoryPrice(item), lineTotal: Math.round(quantity * inventoryPrice(item))
+      unitPrice, lineTotal: Math.round(quantity * unitPrice)
     });
   }
   renderPosCart();
@@ -1752,7 +1777,7 @@ function renderPosCart() {
     ? `<div class="text-center py-8 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">No items in bill yet. Search and select an item to add.</div>`
     : posCart.map((c, idx) => `
       <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border ${c.isLoyaltyFreeGiveaway ? 'border-emerald-500/40' : 'border-slate-800'} text-xs">
-        <div><p class="font-bold text-white">${esc(c.name)}</p><p class="text-slate-400">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}${c.quantity === 1 ? '' : 's'} ${c.isLoyaltyFreeGiveaway ? '— FREE LOYALTY GIVEAWAY' : `× Rs. ${c.unitPrice.toLocaleString()} ${esc(inventoryPriceLabel(c))}`}</p></div>
+        <div><p class="font-bold text-white">${esc(c.name)}${c.isPieces ? ' — Pieces' : ''}</p><p class="text-slate-400">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}${c.quantity === 1 ? '' : 's'} ${c.isLoyaltyFreeGiveaway ? '— FREE LOYALTY GIVEAWAY' : `× Rs. ${c.unitPrice.toLocaleString()} ${esc(inventoryPriceLabel(c))}`}</p></div>
         <div class="flex items-center gap-3">
           <span class="font-extrabold ${c.isLoyaltyFreeGiveaway ? 'text-emerald-400' : 'text-yellow-400'} text-sm">${c.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${c.lineTotal.toLocaleString()}`}</span>
           <button onclick="removePosCartItem(${idx})" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-xmark"></i></button>
@@ -1917,6 +1942,7 @@ function completePosSale() {
       unitLabel: inventoryUnitLabel(ci), unitPrice: ci.unitPrice,
       weightKg: ci.unitType === 'kg' ? ci.quantity : 0,
       packWeightGrams: ci.packWeightGrams, lineTotal: ci.lineTotal,
+      ...(ci.isPieces ? { isPieces: true } : {}),
       ...(ci.isLoyaltyFreeGiveaway ? { isLoyaltyFreeGiveaway: true } : {})
     });
   });
@@ -1937,7 +1963,7 @@ function completePosSale() {
   }
   const pointsBalanceAfter = loyaltyPlan.pointsAvailable - loyaltyPointsRedeemed;
   const itemsSummary = itemsDetails.map((item) =>
-    `${item.name} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`
+    `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`
   ).join(', ');
 
   pendingPosSale = {
@@ -1968,7 +1994,7 @@ function renderPosSaleReceipt(sale) {
     ...(sale.itemsDetails || []).filter((item) => !item.isLoyaltyFreeGiveaway),
     ...(sale.itemsDetails || []).filter((item) => item.isLoyaltyFreeGiveaway)
   ].map((item) => `
-    <div class="grid grid-cols-12 ${item.isLoyaltyFreeGiveaway ? 'font-bold text-emerald-700' : ''}"><span class="col-span-6 truncate">${esc(item.name)}</span><span class="col-span-2 text-right">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel)}</span><span class="col-span-4 text-right">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs.${Number(item.lineTotal).toLocaleString()}`}</span></div>`).join('');
+    <div class="grid grid-cols-12 ${item.isLoyaltyFreeGiveaway ? 'font-bold text-emerald-700' : ''}"><span class="col-span-6 truncate">${esc(item.name)}${item.isPieces ? ' — Pieces' : ''}</span><span class="col-span-2 text-right">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel)}</span><span class="col-span-4 text-right">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs.${Number(item.lineTotal).toLocaleString()}`}</span></div>`).join('');
   $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
   $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
   $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;

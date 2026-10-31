@@ -849,6 +849,13 @@
               <button onclick="setPosWeight(2.0)" class="bg-slate-800 hover:bg-yellow-400 hover:text-slate-950 text-slate-200 font-bold py-2 rounded-xl text-xs border border-slate-700 transition">2.0 kg</button>
               <button onclick="setPosWeight(5.0)" class="bg-slate-800 hover:bg-yellow-400 hover:text-slate-950 text-slate-200 font-bold py-2 rounded-xl text-xs border border-slate-700 transition">5.0 kg</button>
             </div>
+            <fieldset id="pos-chicken-cut-options" class="hidden rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+              <legend class="px-1 text-xs font-bold text-slate-300">Chicken preparation</legend>
+              <div class="flex flex-wrap gap-4 text-xs font-semibold">
+                <label class="flex cursor-pointer items-center gap-2 text-slate-200"><input type="radio" name="pos-chicken-cut" value="whole" checked onchange="updatePosLinePreview()" class="accent-yellow-400"> Whole Chicken</label>
+                <label class="flex cursor-pointer items-center gap-2 text-yellow-300"><input type="radio" name="pos-chicken-cut" value="pieces" onchange="updatePosLinePreview()" class="accent-yellow-400"> Pieces (+ Rs. 200/kg)</label>
+              </div>
+            </fieldset>
             <div id="pos-kg-control" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
               <div><label class="block text-xs text-slate-400 mb-1">Exact Weight (kg)</label><input type="number" step="0.05" id="pos-weight-input" placeholder="Enter weight" oninput="updatePosLinePreview()" class="w-full px-3.5 py-2.5 rounded-xl text-base font-black"></div>
               <div><label class="block text-xs text-slate-400 mb-1">Line Price Preview</label><div id="pos-line-preview" class="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-base font-black text-yellow-400">—</div></div>
