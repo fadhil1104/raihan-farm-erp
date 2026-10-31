@@ -132,12 +132,136 @@ router.put('/', requireAuth, async (req, res) => {
   }
   if (!isAdmin) await deductSoldInventory(newlyCreatedSales);
   if (body.dailyVault && typeof body.dailyVault === 'object') {
-    const ops = Object.entries(body.dailyVault).map(([date, day]) => ({
-      updateOne: { filter: { uid: date }, update: { $set: { ...day, date, uid: date } }, upsert: true }
-    }));
+    const ops = Object.entries(body.dailyVault).map(([date, day]) => {
+      const dailyRecord = { ...day, date, uid: date };
+      if (!isAdmin) delete dailyRecord.inventoryAdjustments;
+      return {
+        updateOne: { filter: { uid: date }, update: { $set: dailyRecord }, upsert: true }
+      };
+    });
     if (ops.length) await DailyVault.bulkWrite(ops);
   }
   res.json({ ok: true, savedAt: new Date().toISOString() });
+});
+
+router.post('/inventory/adjustments', requireAuth, async (req, res) => {
+  const itemId = String(req.body?.itemId || '');
+  const direction = String(req.body?.direction || '');
+  const quantityRaw = req.body?.quantity;
+  const quantityInput = Number(quantityRaw);
+  const reason = String(req.body?.reason || '').trim();
+  const note = String(req.body?.note || '').trim();
+  const validReasons = ['Spoilage', 'Trimming / waste', 'Stock-count correction', 'Other'];
+  if (!itemId || !['INCREASE', 'DECREASE', 'COUNT'].includes(direction)) {
+    return res.status(400).json({ error: 'Select a valid meat item and adjustment type.' });
+  }
+  if (typeof quantityRaw !== 'number' || !Number.isFinite(quantityInput) || quantityInput < 0 ||
+      (direction !== 'COUNT' && quantityInput === 0)) {
+    return res.status(400).json({ error: direction === 'COUNT'
+      ? 'Enter a valid counted balance of zero or more.'
+      : 'Enter an adjustment amount greater than zero.' });
+  }
+  const quantity = Math.round(quantityInput * 100) / 100;
+  if (direction !== 'COUNT' && quantity <= 0) {
+    return res.status(400).json({ error: 'Adjustment must be at least 0.01 kg.' });
+  }
+  if (!validReasons.includes(reason) || (reason === 'Other' && !note)) {
+    return res.status(400).json({ error: reason === 'Other'
+      ? 'Add a note when selecting Other as the reason.'
+      : 'Select a valid reason for this adjustment.' });
+  }
+  if (note.length > 160) return res.status(400).json({ error: 'Adjustment notes must be 160 characters or fewer.' });
+
+  const item = await InventoryItem.findOne({ id: itemId });
+  if (!item) return res.status(404).json({ error: 'Inventory item not found.' });
+  if ((item.unitType || 'kg') !== 'kg') {
+    return res.status(400).json({ error: 'Stock adjustments are available for meat items measured in kilograms.' });
+  }
+
+  const now = new Date();
+  const dateTimeParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Colombo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(now);
+  const timePart = (type) => dateTimeParts.find((part) => part.type === type).value;
+  const date = `${timePart('year')}-${timePart('month')}-${timePart('day')}`;
+  const currentStock = Number(item.stockKg || 0);
+  let delta = direction === 'DECREASE' ? -quantity : quantity;
+  let newStock = +(currentStock + delta).toFixed(2);
+
+  if (direction === 'COUNT') {
+    const day = await DailyVault.findOne({ uid: date }).lean();
+    const snapshot = day?.inventorySnapshot?.find((row) => String(row.id) === itemId);
+    const adjustments = (day?.inventoryAdjustments || []).filter((entry) => String(entry.itemId) === itemId);
+    const openingStock = Number(snapshot?.openingStock ?? snapshot?.openingKg);
+    const addedStock = Number(snapshot?.addedStock ?? snapshot?.slaughterInKg);
+    const soldStock = Number(snapshot?.soldStock ?? snapshot?.soldKg);
+    const priorAdjustmentDelta = adjustments.reduce((total, entry) =>
+      total + Number(entry.delta ?? ((entry.direction === 'DECREASE' ? -1 : 1) * Number(entry.quantity || 0))), 0);
+    const expectedBeforeCount = [openingStock, addedStock, soldStock, priorAdjustmentDelta].every(Number.isFinite)
+      ? openingStock + addedStock - soldStock + priorAdjustmentDelta
+      : currentStock;
+    delta = +(quantity - expectedBeforeCount).toFixed(2);
+    newStock = quantity;
+  }
+  if (newStock < 0) {
+    return res.status(400).json({ error: `Cannot reduce more than the available ${currentStock.toFixed(2)} kg.` });
+  }
+
+  const adjustment = {
+    id: `inventory-adjustment-${randomUUID()}`,
+    date,
+    time: `${timePart('hour')}:${timePart('minute')}`,
+    itemId: item.id,
+    itemName: item.name,
+    unitLabel: 'kg',
+    direction: delta < 0 ? 'DECREASE' : delta > 0 ? 'INCREASE' : 'COUNT',
+    mode: direction,
+    delta,
+    quantity: Math.abs(delta),
+    ...(direction === 'COUNT' ? { countedStock: quantity } : {}),
+    reason,
+    note,
+    recordedBy: String(req.user.label || req.user.username)
+  };
+  const stockFilter = { id: item.id, stockKg: currentStock };
+  const updatedItem = await InventoryItem.findOneAndUpdate(
+    stockFilter,
+    { $set: { stockKg: newStock } },
+    { new: true, runValidators: true }
+  );
+  if (!updatedItem) {
+    return res.status(409).json({ error: 'Stock changed while recording this adjustment. Refresh and try again.' });
+  }
+
+  try {
+    await DailyVault.findOneAndUpdate(
+      { uid: date },
+      { $setOnInsert: { uid: date, date, seq: Date.now() }, $push: { inventoryAdjustments: adjustment } },
+      { upsert: true, new: true, runValidators: true }
+    );
+  } catch (error) {
+    try {
+      const rollback = await InventoryItem.updateOne(
+        { id: item.id, stockKg: newStock },
+        { $set: { stockKg: currentStock } }
+      );
+      if (rollback.modifiedCount !== 1) {
+        throw new Error('Inventory changed before rollback could be applied.');
+      }
+    } catch (rollbackError) {
+      console.error('Failed to roll back inventory after the stock adjustment audit record failed:', rollbackError);
+      throw Object.assign(new Error('The adjustment audit could not be saved, and stock rollback failed. Contact an administrator.'), { status: 500 });
+    }
+    throw error;
+  }
+
+  res.status(201).json({ date, stockKg: updatedItem.stockKg, adjustment });
 });
 
 router.post('/cashier-entries', requireAuth, async (req, res) => {

@@ -1070,10 +1070,8 @@ async function submitInventoryEdit(id) {
   showToast(`Admin updated ${item.name} immediately.`, 'success');
 }
 
-function recordInventoryAdjustment() {
-  if (currentUser?.role !== 'admin') {
-    return showToast('Only an admin can record a manual stock adjustment.', 'error');
-  }
+async function recordInventoryAdjustment() {
+  if (!currentUser) return showToast('Sign in before recording a stock adjustment.', 'error');
   const itemId = $('inv-adjustment-item').value;
   const item = state.inventory.find((entry) => String(entry.id) === itemId);
   const direction = $('inv-adjustment-direction').value;
@@ -1099,57 +1097,36 @@ function recordInventoryAdjustment() {
     return showToast('Counted balance cannot be negative.', 'error');
   }
 
-  const today = getTodayDate();
-  syncTodayIntoDailyVault();
-  const day = state.dailyVault[today];
-  if (!Array.isArray(day.inventoryAdjustments)) day.inventoryAdjustments = [];
-  const itemSnapshot = day.inventorySnapshot.find((row) => String(row.id) === String(item.id));
-  if (!itemSnapshot) {
-    return showToast('Could not prepare this item’s daily stock record. Refresh and try again.', 'error');
+  const submitButton = document.querySelector('[onclick="recordInventoryAdjustment()"]');
+  if (submitButton) submitButton.disabled = true;
+  try {
+    const result = await Api.recordInventoryAdjustment({
+      itemId: item.id,
+      direction,
+      quantity: enteredQuantity,
+      reason,
+      note
+    });
+    item.stockKg = Number(result.stockKg);
+    if (!state.dailyVault) state.dailyVault = {};
+    if (!state.dailyVault[result.date]) state.dailyVault[result.date] = { date: result.date, inventoryAdjustments: [] };
+    if (!Array.isArray(state.dailyVault[result.date].inventoryAdjustments)) {
+      state.dailyVault[result.date].inventoryAdjustments = [];
+    }
+    state.dailyVault[result.date].inventoryAdjustments.push(result.adjustment);
+    syncTodayIntoDailyVault();
+    $('inv-adjustment-quantity').value = '';
+    $('inv-adjustment-note').value = '';
+    $('inv-adjustment-reason').value = '';
+    renderAll();
+    showToast(direction === 'COUNT'
+      ? `${item.name} physical count recorded as ${enteredQuantity.toFixed(2)} kg.`
+      : `${item.name} stock ${direction === 'DECREASE' ? 'reduced' : 'increased'} by ${enteredQuantity.toFixed(2)} kg. Adjustment recorded.`, 'success');
+  } catch (err) {
+    showToast(`Could not record stock adjustment: ${err.message}`, 'error');
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
-  const priorAdjustmentDelta = day.inventoryAdjustments
-    .filter((entry) => String(entry.itemId) === String(item.id))
-    .reduce((total, entry) => total + Number(entry.delta ?? ((entry.direction === 'DECREASE' ? -1 : 1) * Number(entry.quantity || 0))), 0);
-  const openingStock = Number(itemSnapshot.openingStock ?? itemSnapshot.openingKg);
-  const addedStock = Number(itemSnapshot.addedStock ?? itemSnapshot.slaughterInKg);
-  const soldStock = Number(itemSnapshot.soldStock ?? itemSnapshot.soldKg);
-  if (![openingStock, addedStock, soldStock, priorAdjustmentDelta].every(Number.isFinite)) {
-    return showToast('This item’s stock movement record is incomplete. Refresh and try again.', 'error');
-  }
-  const expectedBeforeAdjustment = openingStock + addedStock - soldStock + priorAdjustmentDelta;
-  const adjustmentDelta = direction === 'COUNT'
-    ? +(enteredQuantity - expectedBeforeAdjustment).toFixed(2)
-    : direction === 'DECREASE' ? -enteredQuantity : enteredQuantity;
-  const newStock = direction === 'COUNT'
-    ? enteredQuantity
-    : +(inventoryStock(item) + adjustmentDelta).toFixed(2);
-  if (newStock < 0) {
-    return showToast(`Cannot reduce more than the available ${inventoryStockText(item, 2)}.`, 'error');
-  }
-  day.inventoryAdjustments.push({
-    id: `inventory-adjustment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    date: today,
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    itemId: item.id,
-    itemName: item.name,
-    unitLabel: inventoryUnitLabel(item),
-    direction: adjustmentDelta < 0 ? 'DECREASE' : adjustmentDelta > 0 ? 'INCREASE' : 'COUNT',
-    mode: direction,
-    delta: adjustmentDelta,
-    quantity: Math.abs(adjustmentDelta),
-    ...(direction === 'COUNT' ? { countedStock: enteredQuantity } : {}),
-    reason,
-    note,
-    recordedBy: currentUser.label || currentUser.username
-  });
-  item.stockKg = +newStock.toFixed(2);
-  $('inv-adjustment-quantity').value = '';
-  $('inv-adjustment-note').value = '';
-  $('inv-adjustment-reason').value = '';
-  saveState();
-  showToast(direction === 'COUNT'
-    ? `${item.name} physical count recorded as ${enteredQuantity.toFixed(2)} kg.`
-    : `${item.name} stock ${direction === 'DECREASE' ? 'reduced' : 'increased'} by ${enteredQuantity.toFixed(2)} kg. Adjustment reason recorded.`, 'success');
 }
 
 function renderInventoryAdjustmentHistory() {
