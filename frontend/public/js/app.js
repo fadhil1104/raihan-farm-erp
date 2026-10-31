@@ -2493,9 +2493,15 @@ async function saveNewStaff() {
 }
 
 function updatePayrollField(staffId, field, value) {
+  if (currentUser?.role !== 'admin') return showToast('Only admins can edit payroll settings.', 'error');
   const staff = state.staff.find((member) => member.id === staffId);
   if (!staff) return;
-  staff[field] = Number(value) || 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    renderAll();
+    return showToast('Enter a valid non-negative amount.', 'error');
+  }
+  staff[field] = amount;
   saveState();
   showToast(`Updated ${staff.name}'s ${field}`, 'info');
 }
@@ -3066,7 +3072,7 @@ function renderAll() {
       <tr class="hover:bg-slate-800/40 transition">
         <td class="py-3 px-3"><div class="font-bold text-white">${esc(staff.name)}</div><div class="text-xs text-slate-400">${esc(staff.role)}</div></td>
         <td class="py-3 px-3 font-semibold">${p.logs.length}</td>
-        <td class="py-3 px-3">Rs. ${staff.baseSalary.toLocaleString()}</td>
+        <td class="py-3 px-3"><input type="number" min="0" step="1" value="${Number(staff.baseSalary) || 0}" aria-label="Base salary for ${esc(staff.name)}" onchange="updatePayrollField(${staff.id}, 'baseSalary', this.value)" class="w-28 px-2 py-1 rounded text-xs font-bold"></td>
         <td class="py-3 px-3 font-bold text-yellow-400">${p.totalOt.toFixed(1)} hrs</td>
         <td class="py-3 px-3 font-semibold text-emerald-400">+ Rs. ${p.otPay.toLocaleString()}</td>
         <td class="py-3 px-3"><input type="number" value="${staff.allowance}" onchange="updatePayrollField(${staff.id}, 'allowance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold"></td>
