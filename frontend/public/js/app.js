@@ -56,6 +56,9 @@ let pendingReceiptRedemptionSaleId = null;
 let activeReceiptPrintSaleId = null;
 let receiptPrintStyle = null;
 let receiptPrintOriginalStyle = null;
+let inventoryStockAdditions = null;
+let inventoryStockAdditionsDate = '';
+let inventoryStockAdditionsRequestId = 0;
 const LOYALTY_POINTS_PER_REWARD = 50;
 const LOYALTY_REWARD_KG = 0.5;
 let posIncomePeriod = 'DAY';
@@ -967,6 +970,10 @@ async function submitInventoryEdit(id) {
       else item.stockQuantity = Number(updated.stockQuantity);
       $(`inv-add-stock-${id}`).value = '';
       saveState();
+      const reportDate = $('inv-stock-additions-date')?.value;
+      if (reportDate === getTodayDate() && inventoryStockAdditions !== null) {
+        await loadInventoryStockAdditions();
+      }
       showToast(`Added ${quantity} ${inventoryUnitLabel(item)} to ${item.name}.`, 'success');
     } catch (err) {
       showToast(err.message, 'error');
@@ -2432,7 +2439,7 @@ function openPayslipModal(empId) {
 function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
 
 function printSection(elementId) {
-  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
   const printArea = $(elementId);
   printArea.classList.add('printable-active');
   if (elementId === 'receipt-print-area') {
@@ -2451,7 +2458,7 @@ function printSection(elementId) {
 }
 
 window.addEventListener('afterprint', () => {
-  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area']
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area']
     .forEach((id) => $(id).classList.remove('printable-active'));
   if (receiptPrintStyle) {
     receiptPrintStyle.remove();
@@ -2659,6 +2666,8 @@ function togglePosProductList() {
 
 function renderInventoryCards() {
   if (!state) return;
+  const additionsDateInput = $('inv-stock-additions-date');
+  if (additionsDateInput && !additionsDateInput.value) additionsDateInput.value = getTodayDate();
   const uniqueNames = [...new Set(state.inventory.map((item) => String(item.name || '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   const uniqueSuppliers = [...new Set(state.inventory.map((item) => String(item.source || '').trim()).filter(Boolean))]
@@ -2720,6 +2729,76 @@ function renderInventoryCards() {
         </div>
       </div>`;
   }).join('');
+}
+
+function renderInventoryStockAdditions() {
+  const tbody = $('inv-stock-additions-tbody');
+  if (!tbody) return;
+  const printButton = $('inv-stock-additions-print-button');
+  const loaded = Array.isArray(inventoryStockAdditions);
+  if (printButton) printButton.disabled = !loaded;
+  if (!loaded) return;
+
+  const totals = inventoryStockAdditions.reduce((result, addition) => {
+    const unit = addition.unitLabel || 'unit';
+    result[unit] = (result[unit] || 0) + Number(addition.quantity || 0);
+    return result;
+  }, {});
+  $('inv-stock-additions-heading').innerText = `Inventory Stock Additions — ${inventoryStockAdditionsDate}`;
+  $('inv-stock-additions-totals').innerText = inventoryStockAdditions.length
+    ? `${inventoryStockAdditions.length} addition${inventoryStockAdditions.length === 1 ? '' : 's'} · Total added: ${Object.entries(totals)
+      .map(([unit, quantity]) => `${quantity.toFixed(unit === 'kg' ? 2 : 0)} ${unit}`).join(' · ')}`
+    : 'No stock additions were recorded for this day.';
+  tbody.innerHTML = inventoryStockAdditions.length
+    ? inventoryStockAdditions.map((addition) => `
+      <tr class="border-b border-slate-800">
+        <td class="py-2 px-3">${esc(addition.time || '—')}</td>
+        <td class="py-2 px-3 font-bold">${esc(addition.itemName || '—')}</td>
+        <td class="py-2 px-3">${esc(addition.addedBy || '—')}</td>
+        <td class="py-2 px-3 text-right font-bold">${Number(addition.quantity).toFixed(addition.unitLabel === 'kg' ? 2 : 0)}</td>
+        <td class="py-2 px-3">${esc(addition.unitLabel || 'unit')}</td>
+        <td class="py-2 px-3">${esc(addition.source || '—')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="py-4 text-center text-slate-500">No stock additions recorded for this day.</td></tr>';
+}
+
+function resetInventoryStockAdditionsSummary() {
+  inventoryStockAdditionsRequestId += 1;
+  inventoryStockAdditions = null;
+  inventoryStockAdditionsDate = '';
+  $('inv-stock-additions-heading').innerText = 'Select the day and view the summary.';
+  $('inv-stock-additions-totals').innerText = '';
+  $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-slate-500">Choose a day to load stock additions.</td></tr>';
+  renderInventoryStockAdditions();
+}
+
+async function loadInventoryStockAdditions() {
+  const date = $('inv-stock-additions-date').value;
+  if (!date) return showToast('Choose a day for the inventory summary.', 'error');
+  const requestId = ++inventoryStockAdditionsRequestId;
+  $('inv-stock-additions-heading').innerText = 'Loading inventory stock additions…';
+  $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-slate-500">Loading…</td></tr>';
+  inventoryStockAdditions = null;
+  renderInventoryStockAdditions();
+  try {
+    const result = await Api.getInventoryStockAdditions(date);
+    if (requestId !== inventoryStockAdditionsRequestId) return;
+    inventoryStockAdditions = result.additions;
+    inventoryStockAdditionsDate = result.date;
+    renderInventoryStockAdditions();
+  } catch (err) {
+    if (requestId !== inventoryStockAdditionsRequestId) return;
+    $('inv-stock-additions-heading').innerText = 'Unable to load inventory stock additions.';
+    $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-red-300">The summary could not be loaded. Please try again.</td></tr>';
+    showToast(err.message, 'error');
+  }
+}
+
+function printInventoryStockAdditions() {
+  if (!Array.isArray(inventoryStockAdditions) || inventoryStockAdditionsDate !== $('inv-stock-additions-date').value) {
+    return showToast('Load a day’s inventory summary before printing.', 'error');
+  }
+  printSection('inventory-stock-additions-print-area');
 }
 
 function renderSlaughterProducts() {

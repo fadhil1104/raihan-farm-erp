@@ -17,6 +17,11 @@ const InventoryItem = model('InventoryItem', new Schema({
   packWeightGrams: Number, wholesalePrice: { type: Number, default: 0 }
 }, opts));
 
+const InventoryStockAddition = model('InventoryStockAddition', new Schema({
+  ...base, id: String, date: String, time: String, addedAt: Date,
+  itemId: String, itemName: String, source: String, quantity: Number, unitLabel: String, addedBy: String
+}, opts));
+
 const InventoryApproval = model('InventoryApproval', new Schema({
   ...base, reqId: String, itemId: String, itemName: String, requestedBy: String, time: String,
   oldPrice: Number, newPrice: Number, oldStock: Number, newStock: Number, reason: String,
@@ -123,5 +128,5 @@ const collections = [
  */
 
 module.exports = {
-  collections, DailyVault, InventoryItem, Employee, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
+  collections, DailyVault, InventoryItem, InventoryStockAddition, Employee, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
 };

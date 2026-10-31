@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { collections, DailyVault, InventoryItem, CashierEntry, PosSale, Customer, Receivable } = require('../models');
+const { collections, DailyVault, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { randomUUID } = require('node:crypto');
 
@@ -286,6 +286,20 @@ router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, deletedSale: clean(sale.toObject()), restoredInventoryItems: itemIds.length });
 });
 
+router.get('/inventory/stock-additions', requireAuth, async (req, res) => {
+  const date = String(req.query.date || '');
+  const parsedDate = new Date(`${date}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+    return res.status(400).json({ error: 'A valid inventory summary date is required.' });
+  }
+
+  const additions = await InventoryStockAddition.find({ date })
+    .sort({ addedAt: 1, _id: 1 })
+    .select('-_id -__v -createdAt -updatedAt')
+    .lean();
+  res.json({ date, additions });
+});
+
 router.post('/inventory/:id/stock', requireAuth, async (req, res) => {
   const item = await InventoryItem.findOne({ id: req.params.id });
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
@@ -299,12 +313,51 @@ router.post('/inventory/:id/stock', requireAuth, async (req, res) => {
   }
 
   const stockField = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+  const addedAt = new Date();
   const updated = await InventoryItem.findOneAndUpdate(
     { id: req.params.id },
     { $inc: { [stockField]: quantity } },
     { new: true, runValidators: true }
   );
   if (!updated) return res.status(404).json({ error: 'Inventory item not found' });
+  const dateTimeParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Colombo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(addedAt);
+  const timePart = (type) => dateTimeParts.find((part) => part.type === type).value;
+  const date = `${timePart('year')}-${timePart('month')}-${timePart('day')}`;
+  const unitLabel = unitType === 'kg' ? 'kg'
+    : unitType === 'packet' ? `${Number(item.packWeightGrams || 0)}g packet` : (item.unitLabel || 'unit');
+  const additionId = randomUUID();
+  try {
+    await InventoryStockAddition.create({
+      id: additionId,
+      uid: additionId,
+      date,
+      time: `${timePart('hour')}:${timePart('minute')}:${timePart('second')}`,
+      addedAt,
+      itemId: item.id,
+      itemName: item.name,
+      source: item.source || '',
+      quantity,
+      unitLabel,
+      addedBy: String(req.user.label || req.user.username)
+    });
+  } catch (error) {
+    try {
+      await InventoryItem.updateOne({ id: item.id }, { $inc: { [stockField]: -quantity } });
+    } catch (rollbackError) {
+      console.error('Failed to roll back inventory stock after its addition audit record failed:', rollbackError);
+      throw Object.assign(new Error('Stock was added but its audit record could not be saved, and stock rollback failed.'), { status: 500 });
+    }
+    throw error;
+  }
   res.json({ id: updated.id, stockKg: updated.stockKg, stockQuantity: updated.stockQuantity });
 });
 

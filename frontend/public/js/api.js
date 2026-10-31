@@ -44,6 +44,7 @@ const Api = (() => {
     resetCashierDrawer: () => request('/state/cashier-entries', { method: 'DELETE' }),
     deletePosSale: (saleId) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'DELETE' }),
     addInventoryStock: (itemId, quantity) => request('/state/inventory/' + encodeURIComponent(itemId) + '/stock', { method: 'POST', body: { quantity } }),
+    getInventoryStockAdditions: (date) => request('/state/inventory/stock-additions?date=' + encodeURIComponent(date)),
     roster: () => request('/attendance/roster', { auth: false }),
     qrClock: (empId, pin) => request('/attendance/qr-clock', { method: 'POST', body: { empId, pin }, auth: false }),
     kioskClock: (empId) => request('/attendance/clock', { method: 'POST', body: { empId } }),

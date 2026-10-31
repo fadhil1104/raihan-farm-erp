@@ -101,5 +101,18 @@ input[type="month"]::-webkit-calendar-picker-indicator {
   .printable-active#pos-summary-print-area .text-right { text-align: right; }
   .printable-active#pos-summary-print-area .text-center { text-align: center; }
   .printable-active#pos-summary-print-area tr { page-break-inside: avoid; }
+  .printable-active#inventory-stock-additions-print-area {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0 !important;
+    overflow: visible;
+    font: 10pt/1.35 Arial, sans-serif;
+  }
+  .printable-active#inventory-stock-additions-print-area h4,
+  .printable-active#inventory-stock-additions-print-area div { color: #000 !important; }
+  .printable-active#inventory-stock-additions-print-area table { width: 100%; border-collapse: collapse; table-layout: auto; }
+  .printable-active#inventory-stock-additions-print-area th,
+  .printable-active#inventory-stock-additions-print-area td { border: 1px solid #aaa; padding: 6px; color: #000 !important; }
+  .printable-active#inventory-stock-additions-print-area tr { page-break-inside: avoid; }
 }
 .pos-summary-print-area { display: none; }
