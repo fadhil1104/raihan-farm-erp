@@ -447,7 +447,13 @@ function syncTodayIntoDailyVault() {
   const today = getTodayDate();
   const todaysSales = todaysPosSales();
   const todaysBatches = state.slaughterBatches.filter((b) => String(b.date).startsWith(today));
+  const previousSnapshotDate = Object.keys(state.dailyVault || {})
+    .filter((date) => date < today)
+    .sort()
+    .pop();
+  const previousSnapshot = previousSnapshotDate ? state.dailyVault[previousSnapshotDate] : null;
   if (!state.dailyVault) state.dailyVault = {};
+  const existingSnapshot = state.dailyVault[today];
   state.dailyVault[today] = {
     date: today,
     posSales: JSON.parse(JSON.stringify(todaysSales)),
@@ -456,6 +462,10 @@ function syncTodayIntoDailyVault() {
       const unitType = inventoryUnit(item);
       const unitLabel = inventoryUnitLabel(item);
       const kg = unitType === 'kg';
+      const previousItemSnapshot = (previousSnapshot?.inventorySnapshot || [])
+        .find((row) => String(row.id) === String(item.id));
+      const existingItemSnapshot = (existingSnapshot?.inventorySnapshot || [])
+        .find((row) => String(row.id) === String(item.id));
       const addedStock = kg ? todaysBatches.reduce((total, batch) => total + batchOutputs(batch)
         .filter((output) => String(output.categoryId) === String(item.id))
         .reduce((sum, output) => sum + Number(output.actualKg || 0), 0), 0) : 0;
@@ -471,7 +481,14 @@ function syncTodayIntoDailyVault() {
       });
       const closingStock = inventoryStock(item);
       const precision = kg ? 2 : 0;
-      const openingStock = Math.max(0, +(closingStock - addedStock + soldStock).toFixed(precision));
+      const previousClosingStock = previousItemSnapshot
+        ? Number(previousItemSnapshot.closingStock ?? previousItemSnapshot.closingKg)
+        : NaN;
+      const openingStock = Number.isFinite(previousClosingStock)
+        ? previousClosingStock
+        : Number.isFinite(Number(existingItemSnapshot?.openingStock ?? existingItemSnapshot?.openingKg))
+          ? Number(existingItemSnapshot.openingStock ?? existingItemSnapshot.openingKg)
+          : Math.max(0, +(closingStock - addedStock + soldStock).toFixed(precision));
       return {
         id: item.id, name: item.name, source: item.source, unitType, unitLabel,
         openingStock, addedStock: +addedStock.toFixed(precision), soldStock: +soldStock.toFixed(precision),
@@ -1051,16 +1068,22 @@ function getDayInventoryRows(snapshot, sales) {
   const rows = new Map((snapshot.inventorySnapshot || []).map((row) => {
     const unitType = row.unitType || 'kg';
     const kg = unitType === 'kg';
+    const openingStock = row.openingStock ?? row.openingKg;
+    const addedStock = row.addedStock ?? row.slaughterInKg;
+    const soldStock = row.soldStock ?? row.soldKg;
+    const closingStock = row.closingStock ?? row.closingKg;
     return [String(row.id), {
       ...row,
       unitType,
       unitLabel: row.unitLabel || (kg ? 'kg' : unitType),
-      openingStock: Number(row.openingStock ?? row.openingKg ?? 0),
-      addedStock: Number(row.addedStock ?? row.slaughterInKg ?? 0),
-      soldStock: Number(row.soldStock ?? row.soldKg ?? 0),
-      closingStock: Number(row.closingStock ?? row.closingKg ?? 0),
+      openingStock: openingStock === undefined || openingStock === null ? null : Number(openingStock),
+      addedStock: addedStock === undefined || addedStock === null ? null : Number(addedStock),
+      soldStock: soldStock === undefined || soldStock === null ? null : Number(soldStock),
+      closingStock: closingStock === undefined || closingStock === null ? null : Number(closingStock),
       price: Number(row.price ?? row.pricePerKg ?? 0),
-      historicalStockAvailable: true
+      historicalStockAvailable: true,
+      stockMovementAvailable: [openingStock, addedStock, soldStock, closingStock]
+        .every((value) => value !== undefined && value !== null && Number.isFinite(Number(value)))
     }];
   }));
   const addCurrentInventoryItem = (item) => {
@@ -1078,7 +1101,8 @@ function getDayInventoryRows(snapshot, sales) {
       soldStock: 0,
       closingStock: null,
       price: null,
-      historicalStockAvailable: false
+      historicalStockAvailable: false,
+      stockMovementAvailable: false
     });
   };
   const addSoldProduct = (itemId, detail = {}) => {
@@ -1098,7 +1122,8 @@ function getDayInventoryRows(snapshot, sales) {
         soldStock: 0,
         closingStock: null,
         price: null,
-        historicalStockAvailable: false
+        historicalStockAvailable: false,
+        stockMovementAvailable: false
       });
       return;
     }
@@ -1114,7 +1139,8 @@ function getDayInventoryRows(snapshot, sales) {
       soldStock: 0,
       closingStock: null,
       price: null,
-      historicalStockAvailable: false
+      historicalStockAvailable: false,
+      stockMovementAvailable: false
     });
   };
   sales.forEach((sale) => {
@@ -1133,7 +1159,17 @@ function getDayInventoryRows(snapshot, sales) {
     }
   });
   state.inventory.forEach(addCurrentInventoryItem);
-  return [...rows.values()];
+  return [...rows.values()].map((row) => {
+    if (row.unitType !== 'kg' || !row.historicalStockAvailable || !row.stockMovementAvailable) {
+      return { ...row, expectedClosingStock: null, stockVariance: null };
+    }
+    const expectedClosingStock = Number(row.openingStock) + Number(row.addedStock) - Number(row.soldStock);
+    return {
+      ...row,
+      expectedClosingStock,
+      stockVariance: expectedClosingStock - Number(row.closingStock)
+    };
+  });
 }
 
 function formatMovementQuantity(value, unitLabel, digits = unitLabel === 'kg' ? 2 : 0) {
@@ -1181,14 +1217,16 @@ function renderCalendarDayInspector() {
   $('calendar-day-sales-panel').classList.toggle('lg:col-span-5', !isRange);
 
   $('cal-day-inventory-tbody').innerHTML = isRange ? '' : inventoryRows.length === 0
-    ? '<tr><td colspan="6" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
+    ? '<tr><td colspan="8" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
     : inventoryRows.map((row) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td class="py-2 px-2 font-bold text-white">${esc(row.name)}${row.source ? `<span class="block text-[10px] font-normal text-slate-400">${esc(row.source)}</span>` : ''}</td>
       <td class="py-2 px-2 text-right text-slate-400">${formatMovementQuantity(row.openingStock, row.unitLabel)}</td>
       <td class="py-2 px-2 text-right font-semibold text-sky-400">${row.addedStock === null ? '—' : `+${formatMovementQuantity(row.addedStock, row.unitLabel)}`}</td>
       <td class="py-2 px-2 text-right font-semibold text-amber-400">-${formatMovementQuantity(row.soldStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-semibold text-slate-300">${formatMovementQuantity(row.expectedClosingStock, row.unitLabel)}</td>
       <td class="py-2 px-2 text-right font-black text-emerald-400">${formatMovementQuantity(row.closingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-bold ${row.stockVariance > 0.009 ? 'text-red-400' : row.stockVariance < -0.009 ? 'text-amber-300' : 'text-emerald-400'}">${row.stockVariance === null ? '—' : row.stockVariance > 0.009 ? `Short ${formatMovementQuantity(row.stockVariance, row.unitLabel)}` : row.stockVariance < -0.009 ? `Extra ${formatMovementQuantity(-row.stockVariance, row.unitLabel)}` : 'Matches'}</td>
       <td class="py-2 px-2 text-right text-yellow-400 font-bold">${row.price === null ? '—' : `Rs. ${Number(row.price).toLocaleString()} / ${esc(row.unitLabel)}`}</td>
     </tr>`).join('');
 

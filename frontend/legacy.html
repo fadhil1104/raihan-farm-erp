@@ -569,11 +569,12 @@
                 <h5 class="font-extrabold text-xs uppercase tracking-wider text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-boxes-stacked"></i> That Day's Inventory & Stock Movement</h5>
                 <span class="text-[11px] text-slate-400">Includes meat, packets, eggs and other inventory units</span>
               </div>
+              <p class="text-[11px] text-slate-400">For meat, expected closing = opening + slaughter received − POS sold. Red means actual stock is short; amber means extra stock. Unrecorded waste or manual stock changes will also appear as a difference.</p>
               <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr class="border-b border-slate-700 text-slate-400 uppercase text-[10px]">
-                      <th class="py-2 px-2">Inventory Item</th><th class="py-2 px-2 text-right">Opening</th><th class="py-2 px-2 text-right">Added / Slaughter In</th><th class="py-2 px-2 text-right">Sold (POS)</th><th class="py-2 px-2 text-right">Closing Stock</th><th class="py-2 px-2 text-right">Rate / Unit</th>
+                      <th class="py-2 px-2">Inventory Item</th><th class="py-2 px-2 text-right">Opening</th><th class="py-2 px-2 text-right">Added / Slaughter In</th><th class="py-2 px-2 text-right">Sold (POS)</th><th class="py-2 px-2 text-right">Expected Closing</th><th class="py-2 px-2 text-right">Actual Closing</th><th class="py-2 px-2 text-right">Difference</th><th class="py-2 px-2 text-right">Rate / Unit</th>
                     </tr>
                   </thead>
                   <tbody id="cal-day-inventory-tbody" class="divide-y divide-slate-800/80"></tbody>
