@@ -106,7 +106,7 @@ const DailyVault = model('DailyVault', new Schema({
  * keyField: natural key inside each record. adminOnly: staff role may not write it.
  */
 const collections = [
-  { key: 'inventory',                 Model: InventoryItem,     keyField: 'id' },
+  { key: 'inventory',                 Model: InventoryItem,     keyField: 'id',    protect: ['stockKg', 'stockQuantity'] },
   { key: 'pendingInventoryApprovals', Model: InventoryApproval, keyField: 'reqId' },
   { key: 'customers',                 Model: Customer,          keyField: 'id' },
   { key: 'farmIntakes',               Model: FarmIntake,        keyField: 'id',    adminOnly: true, sortNewest: true },

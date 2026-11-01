@@ -47,6 +47,7 @@ const Api = (() => {
     updatePosSalePaymentMethod: (saleId, payment) => request('/state/pos-sales/' + encodeURIComponent(saleId) + '/payment', { method: 'PATCH', body: { payment } }),
     updatePosSale: (saleId, sale) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'PUT', body: sale }),
     deletePosSale: (saleId) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'DELETE' }),
+    updateInventoryItem: (itemId, item) => request('/state/inventory/' + encodeURIComponent(itemId), { method: 'PUT', body: item }),
     addInventoryStock: (itemId, quantity) => request('/state/inventory/' + encodeURIComponent(itemId) + '/stock', { method: 'POST', body: { quantity } }),
     recordInventoryAdjustment: (adjustment) => request('/state/inventory/adjustments', { method: 'POST', body: adjustment }),
     getInventoryStockAdditions: (date) => request('/state/inventory/stock-additions?date=' + encodeURIComponent(date)),

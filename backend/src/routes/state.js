@@ -292,14 +292,14 @@ router.put('/', requireAuth, async (req, res) => {
         return { ...rest, staffId: empId };
       });
     const result = await syncCollection(c, items, replace);
-    if (!isAdmin && c.key === 'posSales' && result?.upsertedIds) {
+    if (!replace && c.key === 'posSales' && result?.upsertedIds) {
       Object.keys(result.upsertedIds).forEach((index) => {
         const sale = items[Number(index)];
         if (sale) newlyCreatedSales.push(sale);
       });
     }
   }
-  if (!isAdmin) await deductSoldInventory(newlyCreatedSales);
+  if (newlyCreatedSales.length) await deductSoldInventory(newlyCreatedSales);
   if (body.dailyVault && typeof body.dailyVault === 'object') {
     const ops = Object.entries(body.dailyVault).map(([date, day]) => {
       const dailyRecord = { ...day, date, uid: date };
@@ -812,6 +812,39 @@ router.get('/inventory/stock-additions', requireAuth, async (req, res) => {
     .select('-_id -__v -createdAt -updatedAt')
     .lean();
   res.json({ date, additions });
+});
+
+router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
+  const item = await InventoryItem.findOne({ id: req.params.id });
+  if (!item) return res.status(404).json({ error: 'Inventory item not found.' });
+
+  const unitType = item.unitType || 'kg';
+  const stockField = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+  const priceField = unitType === 'kg' ? 'pricePerKg' : 'pricePerUnit';
+  const expectedStock = req.body?.expectedStock;
+  const stock = req.body?.[stockField];
+  const price = req.body?.[priceField];
+  const name = String(req.body?.name || '').trim();
+  const source = String(req.body?.source || '').trim();
+  const wholesalePrice = Number(req.body?.wholesalePrice);
+  if (typeof expectedStock !== 'number' || !Number.isFinite(expectedStock) ||
+      typeof stock !== 'number' || !Number.isFinite(stock) || stock < 0 ||
+      (unitType !== 'kg' && !Number.isInteger(stock)) ||
+      typeof price !== 'number' || !Number.isFinite(price) || price <= 0 ||
+      !name || name.length > 160 || !source || source.length > 160 ||
+      !Number.isFinite(wholesalePrice) || wholesalePrice < 0) {
+    return res.status(400).json({ error: 'Enter valid item details, prices, and a non-negative stock balance.' });
+  }
+
+  const updated = await InventoryItem.findOneAndUpdate(
+    { id: item.id, [stockField]: expectedStock },
+    { $set: { name, source, wholesalePrice, [priceField]: price, [stockField]: stock } },
+    { new: true, runValidators: true }
+  );
+  if (!updated) {
+    return res.status(409).json({ error: 'Inventory stock changed while you were editing it. Refresh and try again.' });
+  }
+  res.json({ item: clean(updated.toObject()) });
 });
 
 router.post('/inventory/:id/stock', requireAuth, async (req, res) => {

@@ -21,10 +21,6 @@ const inventoryStockText = (item, digits = 0) => `${inventoryStock(item).toFixed
 const batchOutputs = (batch) => Array.isArray(batch.outputs) && batch.outputs.length
   ? batch.outputs
   : (batch.categoryId ? [{ categoryId: batch.categoryId, categoryName: batch.categoryName, actualKg: Number(batch.actualKg || 0) }] : []);
-const setInventoryValues = (item, price, stock) => {
-  if (inventoryUnit(item) === 'kg') { item.pricePerKg = price; item.stockKg = +stock.toFixed(2); }
-  else { item.pricePerUnit = price; item.stockQuantity = Math.round(stock); }
-};
 const phoneKey = (phone) => {
   const digits = String(phone || '').replace(/\D/g, '');
   return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
@@ -1216,12 +1212,23 @@ async function submitInventoryEdit(id) {
   const valuesChanged = newPrice !== inventoryPrice(item) || newStock !== inventoryStock(item);
   if (!detailsChanged && !valuesChanged) return showToast('No changes detected.', 'info');
 
-  item.name = newName;
-  item.source = newSource;
-  item.wholesalePrice = newWholesale;
-  setInventoryValues(item, newPrice, newStock);
-  saveState();
-  showToast(`Admin updated ${item.name} immediately.`, 'success');
+  try {
+    const update = {
+      expectedStock: inventoryStock(item),
+      name: newName,
+      source: newSource,
+      wholesalePrice: newWholesale,
+      ...(inventoryUnit(item) === 'kg'
+        ? { pricePerKg: newPrice, stockKg: newStock }
+        : { pricePerUnit: newPrice, stockQuantity: newStock })
+    };
+    const result = await Api.updateInventoryItem(item.id, update);
+    Object.assign(item, result.item);
+    saveState();
+    showToast(`Admin updated ${item.name} immediately.`, 'success');
+  } catch (err) {
+    showToast(`Could not update ${item.name}: ${err.message}`, 'error');
+  }
 }
 
 async function recordInventoryAdjustment() {
