@@ -56,6 +56,9 @@ cash-drawer/DK port. The printer's RJ45 jack is normally Ethernet and is not
 needed for this USB setup. The printer must support ESC/POS and the standard
 drawer-pulse command. QZ Tray must be running on the POS computer and may ask
 the operator to authorize the website before it can print or open the drawer.
+If a sale is saved but printing fails, start QZ Tray on that same computer,
+approve any connection prompt, and retry using the print button on the saved
+receipt. Do not complete the sale again.
 
 ## Docker
 
