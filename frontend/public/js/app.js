@@ -2454,85 +2454,34 @@ function editPosBill() {
   $('receipt-modal').classList.add('hidden');
 }
 
-const POS_RECEIPT_COLUMNS = 32;
-
-function posReceiptText(value) {
-  return String(value ?? '').normalize('NFKD').replace(/[^\x20-\x7E]/g, '?');
-}
-
-function wrapPosReceiptText(value, width = POS_RECEIPT_COLUMNS) {
-  const words = posReceiptText(value).split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = '';
-  words.forEach((word) => {
-    while (word.length > width) {
-      if (line) lines.push(line);
-      lines.push(word.slice(0, width));
-      word = word.slice(width);
-      line = '';
-    }
-    if (line && `${line} ${word}`.length > width) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = line ? `${line} ${word}` : word;
-    }
-  });
-  if (line) lines.push(line);
-  return lines;
-}
-
-function posReceiptEscPos(sale) {
-  const lines = [];
-  const divider = '-'.repeat(POS_RECEIPT_COLUMNS);
-  const add = (value = '') => lines.push(...wrapPosReceiptText(value));
-  const addPair = (label, value) => {
-    const left = posReceiptText(label);
-    const right = posReceiptText(value);
-    if (left.length + right.length + 1 <= POS_RECEIPT_COLUMNS) {
-      add(`${left}${' '.repeat(POS_RECEIPT_COLUMNS - left.length - right.length)}${right}`);
-    } else {
-      add(left);
-      add(right.padStart(POS_RECEIPT_COLUMNS));
-    }
-  };
+function posSaleReceiptHtml(sale) {
+  const rows = (sale.itemsDetails || []).map((item) => `
+    <tr>
+      <td>${esc(item.name)}${item.isPieces ? ' — Pieces' : ''}</td>
+      <td class="number">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || '')}</td>
+      <td class="number">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`}</td>
+    </tr>`).join('');
   const subtotal = Number(sale.subtotal ?? (sale.itemsDetails || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0));
-
-  lines.push('\x1B\x40', '\x1B\x61\x01', '\x1B\x45\x01');
-  add('RAIHAN FARM SHOP');
-  lines.push('\x1B\x45\x00');
-  add('Fresh Farm-to-Shop Poultry & Meat');
-  add('Mannar Road, Puttalam - Tel: 0786959777');
-  lines.push('\x1B\x61\x00');
-  add(divider);
-  add(`Receipt: ${sale.id}`);
-  add(`Customer: ${sale.customer}`);
-  if (sale.customerPhone) add(`Phone: ${sale.customerPhone}`);
-  add(`Date: ${sale.date} ${sale.time}`);
-  add(`Payment: ${sale.payment}`);
-  add(divider);
-  (sale.itemsDetails || []).forEach((item) => {
-    add(`${item.name}${item.isPieces ? ' - Pieces' : ''}`);
-    const quantity = `${Number(item.quantity).toLocaleString()} ${item.unitLabel || item.unitType || ''}`;
-    addPair(quantity, item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`);
-  });
-  add(divider);
-  addPair('Subtotal:', `Rs. ${subtotal.toLocaleString()}`);
-  addPair('Discount:', `- Rs. ${Number(sale.discount || 0).toLocaleString()}`);
-  if (sale.delivery) addPair('Delivery fee:', `Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}`);
-  lines.push('\x1B\x45\x01');
-  addPair('BILL TOTAL:', `Rs. ${Number(sale.totalRs || 0).toLocaleString()}`);
-  lines.push('\x1B\x45\x00');
-  if (sale.payment === 'CASH') {
-    addPair('Customer paid:', `Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}`);
-    addPair('Balance returned:', `Rs. ${Number(sale.changeRs || 0).toLocaleString()}`);
-  }
-  add(divider);
-  lines.push('\x1B\x61\x01');
-  add('100% Halal - Fresh from Raihan Own Farm');
-  add('Thank you for shopping with us!');
-  lines.push('\x1B\x61\x00', '', '', '');
-  return lines.join('\n');
+  const logo = new URL('/raihan-farm-logo.jpeg', window.location.origin).href;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    @page{size:80mm auto;margin:0}*{box-sizing:border-box}body{width:74mm;margin:0;padding:3mm;font:10px/1.35 monospace;color:#111}
+    .center{text-align:center}.rule{border-top:1px dashed #555;margin:8px 0}.muted{color:#555;font-size:9px}
+    .row{display:flex;justify-content:space-between;margin:3px 0}.number{text-align:right;white-space:nowrap}
+    table{width:100%;border-collapse:collapse;font-size:9px}td{padding:3px 1px;vertical-align:top}td:first-child{width:48%}
+    td:nth-child(2){width:24%}td:nth-child(3){width:28%}.total{font-weight:bold;font-size:12px}
+    img{width:42px;height:42px;object-fit:cover}h3{margin:4px 0;font-size:13px}
+  </style></head><body>
+    <header class="center"><img src="${logo}"><h3>RAIHAN FARM SHOP</h3><div>Fresh Farm-to-Shop Poultry &amp; Meat</div><div class="muted">Mannar Road, Puttalam · Tel: 0786959777</div></header>
+    <div class="rule"></div><div>Receipt: <strong>${esc(sale.id)}</strong></div><div>Customer: ${esc(sale.customer)}</div>
+    <div>Phone: ${esc(sale.customerPhone || '—')}</div><div>Date: ${esc(sale.date)} ${esc(sale.time)}</div><div>Pay: ${esc(sale.payment)}</div>
+    <div class="rule"></div><table><tbody>${rows}</tbody></table><div class="rule"></div>
+    <div class="row"><span>Subtotal:</span><span>Rs. ${subtotal.toLocaleString()}</span></div>
+    <div class="row"><span>Discount:</span><span>- Rs. ${Number(sale.discount || 0).toLocaleString()}</span></div>
+    ${sale.delivery ? `<div class="row"><span>Delivery fee:</span><span>Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}</span></div>` : ''}
+    <div class="row total"><span>BILL TOTAL:</span><span>Rs. ${Number(sale.totalRs || 0).toLocaleString()}</span></div>
+    ${sale.payment === 'CASH' ? `<div class="row"><span>Customer paid:</span><span>Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}</span></div><div class="row"><span>Balance returned:</span><span>Rs. ${Number(sale.changeRs || 0).toLocaleString()}</span></div>` : ''}
+    <div class="rule"></div><div class="center muted">100% Halal · Freshly Dressed from Raihan Own Farm<br>Thank you for shopping at Raihan Farm Shop!</div>
+  </body></html>`;
 }
 
 async function printPosReceiptAndOpenDrawer(sale) {
@@ -2554,42 +2503,42 @@ async function printPosReceiptAndOpenDrawer(sale) {
     throw new Error(`QZ Tray is connected, but it could not read the computer's default printer. ${error.message || error}`);
   }
   if (!printer) throw new Error('QZ Tray is connected, but this computer has no default printer selected.');
-  const config = qzTray.configs.create(printer, { jobName: `POS receipt ${sale.id}` });
+  const config = qzTray.configs.create(printer, {
+    jobName: `POS receipt ${sale.id}`,
+    margins: 0,
+    orientation: 'portrait'
+  });
+  let receiptError = null;
+  let drawerError = null;
+  try {
+    await qzTray.print(config, [{
+      type: 'pixel',
+      format: 'html',
+      flavor: 'plain',
+      data: posSaleReceiptHtml(sale),
+      options: {
+        pageWidth: 3.15,
+        pageHeight: Math.max(4, 2.5 + (sale.itemsDetails || []).length * 0.45)
+      }
+    }]);
+  } catch (error) {
+    receiptError = error;
+    console.error(`POS receipt print failed for sale ${sale.id}:`, error);
+  }
+
   try {
     await qzTray.print(config, [{
       type: 'raw',
       format: 'command',
       flavor: 'plain',
-      data: [
-        posReceiptEscPos(sale),
-        '\x1B\x64\x03',
-        '\x1D\x56\x00',
-        '\x1B\x70\x00\x19\xFA'
-      ].join('')
+      data: '\x1B\x70\x00\x19\xFA'
     }]);
   } catch (error) {
-    console.error(`POS ESC/POS job failed for sale ${sale.id}:`, error);
-    throw new Error(`QZ Tray could not send the receipt and drawer command to "${printer}". Check the XPrinter queue/RAW driver and its connection. ${error.message || error}`);
+    drawerError = error;
+    console.error(`POS cash drawer pulse failed for sale ${sale.id}:`, error);
   }
-  return { printer, receiptPrinted: true, drawerOpened: true };
-}
 
-async function printSavedPosReceipt() {
-  const receiptId = $('rc-id').innerText.replace(/^#/, '').trim();
-  const sale = (state?.posSales || []).find((entry) => String(entry.id) === receiptId);
-  if (!sale) return showToast('Cannot find this saved sale to print. Refresh the sales history and try again.', 'error');
-  const button = $('receipt-print-button');
-  button.disabled = true;
-  try {
-    const result = await printPosReceiptAndOpenDrawer(sale);
-    if (sale.loyaltyPointsRedeemed > 0) finalizeLoyaltyRedemptionAfterPrint(sale.id);
-    showToast(`Receipt sent to "${result.printer}" and cash drawer opened.`, 'success');
-  } catch (error) {
-    console.error(`POS receipt/drawer error for sale ${sale.id}:`, error);
-    showToast(`Print/drawer failed: ${error.message}`, 'error');
-  } finally {
-    button.disabled = false;
-  }
+  return { printer, receiptPrinted: !receiptError, drawerOpened: !drawerError, receiptError, drawerError };
 }
 
 async function confirmPosSale() {
@@ -2698,7 +2647,7 @@ function closeReceiptModal() {
   $('receipt-preview-actions').classList.add('hidden');
   $('receipt-saved-actions').classList.add('hidden');
   $('receipt-close-button').classList.remove('hidden');
-  $('receipt-print-button').innerText = 'Print Receipt & Open Drawer';
+  $('receipt-print-button').innerText = 'Print Thermal Receipt';
 }
 
 function finalizeLoyaltyRedemptionAfterPrint(saleId) {
@@ -3049,10 +2998,6 @@ function openPayslipModal(staffId) {
 function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
 
 function printSection(elementId) {
-  if (elementId === 'receipt-print-area') {
-    printSavedPosReceipt();
-    return;
-  }
   ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
   const printArea = $(elementId);
   printArea.classList.add('printable-active');
