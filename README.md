@@ -48,6 +48,12 @@ their user/attendance references are migrated to staff and the legacy `employees
 collection is dropped on backend startup. Non-admin user accounts without a staff
 record are also added to `staffs` with the default payroll settings.
 
+POS receipt printing and cash-drawer opening use QZ Tray on the POS computer.
+Set the receipt thermal printer as that computer's QZ Tray default printer and
+connect the drawer to the printer's drawer port. The printer must support the
+ESC/POS drawer-pulse command. QZ Tray may ask the operator to authorize the
+website before it can print or open the drawer.
+
 ## Docker
 
 ```bash
@@ -117,6 +123,7 @@ The backend and MongoDB API remain independently runnable and deployable.
 | GET | `/api/state` | token | application state with role-based filtering |
 | GET | `/api/state/pos-sales` | token | latest POS sales for background refresh |
 | PATCH | `/api/state/pos-sales/:id/payment` | admin | update a completed POS sale's payment method |
+| PUT | `/api/state/pos-sales/:id` | admin | edit completed POS sale details and adjust stock/credit records |
 | PUT | `/api/state` | token | sync state changes |
 | PUT | `/api/state?replace=true` | admin | restore a backup |
 | GET | `/api/attendance/roster` | public | names and attendance status for QR |

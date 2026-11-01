@@ -62,7 +62,7 @@ async function deductSoldInventory(sales) {
 
 function getSaleInventoryQuantities(sale) {
   const quantities = new Map();
-  if (Array.isArray(sale.itemsDetails)) {
+  if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
     sale.itemsDetails.forEach((detail) => {
       const id = String(detail.id || '');
       const field = detail.unitType === 'kg' ? 'stockKg' : 'stockQuantity';
@@ -82,6 +82,22 @@ function getSaleInventoryQuantities(sale) {
     });
   }
   return quantities;
+}
+
+function adjustDailyVaultStock(vault, quantities, direction) {
+  if (!vault) return;
+  (vault.inventorySnapshot || []).forEach((row) => {
+    const change = quantities.get(String(row.id));
+    if (!change) return;
+    const oldSold = Number(row.soldStock ?? row.soldKg ?? 0);
+    const oldClosing = Number(row.closingStock ?? row.closingKg ?? 0);
+    row.soldStock = Math.max(0, oldSold + direction * change.quantity);
+    row.closingStock = oldClosing - direction * change.quantity;
+    if (change.field === 'stockKg') {
+      row.soldKg = row.soldStock;
+      row.closingKg = row.closingStock;
+    }
+  });
 }
 
 function phoneKey(value) {
@@ -403,6 +419,257 @@ router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, re
     sale: clean(updatedSale.toObject()),
     receivable: receivable ? clean(receivable.toObject()) : null
   });
+});
+
+router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
+  const sale = await PosSale.findOne({ id: req.params.id });
+  if (!sale) return res.status(404).json({ error: 'POS sale not found' });
+
+  const body = req.body || {};
+  const payment = String(body.payment || '');
+  const date = String(body.date || '');
+  const time = String(body.time || '');
+  const customer = String(body.customer || '').trim();
+  const customerPhone = String(body.customerPhone || '').trim();
+  const validPayments = ['CASH', 'CARD', 'QR / TRANSFER', 'CREDIT'];
+  const dateValue = new Date(`${date}T00:00:00.000Z`);
+  if (!validPayments.includes(payment) || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      Number.isNaN(dateValue.getTime()) || dateValue.toISOString().slice(0, 10) !== date ||
+      !/^\d{1,2}:\d{2}\s?(AM|PM)$/i.test(time) || !customer || customer.length > 120 || customerPhone.length > 30) {
+    return res.status(400).json({ error: 'Enter valid customer, date, time, and payment details.' });
+  }
+  if (!Array.isArray(body.itemsDetails) || body.itemsDetails.length === 0 || body.itemsDetails.length > 100) {
+    return res.status(400).json({ error: 'A sale must contain between 1 and 100 items.' });
+  }
+
+  const linkedReceivable = await Receivable.findOne({ id: sale.id });
+  if (linkedReceivable?.status === 'Collected') {
+    return res.status(409).json({ error: 'This credit sale has already been collected and cannot be edited.' });
+  }
+
+  const items = [];
+  for (const detail of body.itemsDetails) {
+    const id = String(detail?.id || '');
+    const item = id ? await InventoryItem.findOne({ id }).lean() : null;
+    const quantity = Number(detail?.quantity);
+    const unitPrice = Number(detail?.unitPrice);
+    const lineTotal = Number(detail?.lineTotal);
+    if (!item || !Number.isFinite(quantity) || quantity <= 0 ||
+        (item.unitType !== 'kg' && !Number.isInteger(quantity)) ||
+        !Number.isFinite(unitPrice) || unitPrice < 0 ||
+        !Number.isFinite(lineTotal) || lineTotal < 0) {
+      return res.status(400).json({ error: 'Each item must reference a current product and have valid quantity and price values.' });
+    }
+
+    const isLoyaltyFreeGiveaway = Boolean(detail.isLoyaltyFreeGiveaway);
+    if (isLoyaltyFreeGiveaway && lineTotal !== 0) {
+      return res.status(400).json({ error: 'Loyalty giveaway items must remain free.' });
+    }
+    const unitType = item.unitType || 'kg';
+    const packWeightGrams = Number(item.packWeightGrams || 0);
+    items.push({
+      id,
+      name: `${item.name}${isLoyaltyFreeGiveaway ? ' - Loyalty Free Giveaway' : ''}`,
+      unitType,
+      quantity,
+      unitLabel: unitType === 'kg' ? 'kg'
+        : unitType === 'packet' ? `${packWeightGrams}g packet`
+          : item.unitLabel || 'unit',
+      unitPrice,
+      weightKg: unitType === 'kg' ? quantity : 0,
+      packWeightGrams,
+      lineTotal,
+      ...(detail.isPieces ? { isPieces: true } : {}),
+      ...(isLoyaltyFreeGiveaway ? { isLoyaltyFreeGiveaway: true } : {})
+    });
+  }
+
+  const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+  const discount = Number(body.discount);
+  const delivery = Boolean(body.delivery);
+  const deliveryFeeRs = delivery ? Number(body.deliveryFeeRs) : 0;
+  const totalRs = Math.max(0, subtotal - discount) + deliveryFeeRs;
+  const cashReceivedRs = payment === 'CASH' ? Number(body.cashReceivedRs) : 0;
+  if (!Number.isInteger(discount) || discount < 0 || discount > subtotal ||
+      !Number.isInteger(deliveryFeeRs) || deliveryFeeRs < 0 ||
+      !Number.isFinite(totalRs) || !Number.isInteger(totalRs) ||
+      (payment === 'CASH' && (!Number.isInteger(cashReceivedRs) || cashReceivedRs < totalRs))) {
+    return res.status(400).json({ error: 'Discount, delivery fee, total, or cash received is invalid.' });
+  }
+
+  const oldQuantities = getSaleInventoryQuantities(sale);
+  const newSaleValues = {
+    date, time, customer, customerPhone, payment,
+    customerPhoneKey: phoneKey(customerPhone),
+    enteredName: customer,
+    itemsDetails: items,
+    itemsSummary: items.map((item) =>
+      `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${item.quantity === 1 ? '' : 's'})`
+    ).join(', '),
+    itemsBreakdown: Object.fromEntries(items
+      .filter((item) => item.unitType === 'kg' && !item.isLoyaltyFreeGiveaway)
+      .reduce((map, item) => map.set(item.id, (map.get(item.id) || 0) + item.quantity), new Map())),
+    totalKg: +items.filter((item) => item.unitType === 'kg')
+      .reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
+    subtotal, discount, delivery, deliveryFeeRs, totalRs,
+    cashReceivedRs,
+    changeRs: payment === 'CASH' ? cashReceivedRs - totalRs : 0
+  };
+  const oldItems = (sale.itemsDetails || []).map((item) => ({
+    id: String(item.id), quantity: Number(item.quantity), unitType: item.unitType,
+    lineTotal: Number(item.lineTotal || 0), isPieces: Boolean(item.isPieces),
+    isLoyaltyFreeGiveaway: Boolean(item.isLoyaltyFreeGiveaway)
+  }));
+  const editedItems = items.map((item) => ({
+    id: String(item.id), quantity: Number(item.quantity), unitType: item.unitType,
+    lineTotal: Number(item.lineTotal || 0), isPieces: Boolean(item.isPieces),
+    isLoyaltyFreeGiveaway: Boolean(item.isLoyaltyFreeGiveaway)
+  }));
+  if ((Number(sale.loyaltyPointsEarned || 0) > 0 || Number(sale.loyaltyPointsRedeemed || 0) > 0 ||
+       Number(sale.loyaltyKgRemainderAfter || 0) > 0) &&
+      (phoneKey(customerPhone) !== phoneKey(sale.customerPhone) ||
+       JSON.stringify(editedItems) !== JSON.stringify(oldItems))) {
+    return res.status(409).json({ error: 'Items or customer phone cannot be changed for a sale with loyalty points or progress; edit its other details instead.' });
+  }
+
+  const inventoryIds = [...new Set([...oldQuantities.keys(), ...getSaleInventoryQuantities(newSaleValues).keys()])];
+  const inventory = await InventoryItem.find({ id: { $in: inventoryIds } });
+  if (inventory.length !== inventoryIds.length) {
+    return res.status(409).json({ error: 'An inventory item in this sale no longer exists.' });
+  }
+  const oldById = oldQuantities;
+  const newById = getSaleInventoryQuantities(newSaleValues);
+  const stockChanges = [];
+  for (const id of inventoryIds) {
+    const oldQuantity = oldById.get(id)?.quantity || 0;
+    const newQuantity = newById.get(id)?.quantity || 0;
+    const field = newById.get(id)?.field || oldById.get(id)?.field;
+    if (oldById.get(id)?.field && newById.get(id)?.field && oldById.get(id).field !== newById.get(id).field) {
+      return res.status(400).json({ error: 'An item cannot change between weight and count units while editing a sale.' });
+    }
+    const delta = oldQuantity - newQuantity;
+    if (delta) stockChanges.push({ id, field, delta });
+  }
+
+  const appliedStockChanges = [];
+  for (const change of stockChanges) {
+    const filter = change.delta < 0
+      ? { id: change.id, [change.field]: { $gte: -change.delta } }
+      : { id: change.id };
+    const updated = await InventoryItem.findOneAndUpdate(
+      filter, { $inc: { [change.field]: change.delta } }, { new: true }
+    );
+    if (!updated) {
+      if (appliedStockChanges.length) {
+        await InventoryItem.bulkWrite(appliedStockChanges.map(({ id, field, delta }) => ({
+          updateOne: { filter: { id }, update: { $inc: { [field]: -delta } } }
+        })));
+      }
+      return res.status(409).json({ error: 'There is not enough stock to apply the edited sale.' });
+    }
+    appliedStockChanges.push(change);
+  }
+
+  let updatedSale;
+  try {
+    updatedSale = await PosSale.findOneAndUpdate(
+      { _id: sale._id, updatedAt: sale.updatedAt },
+      { $set: newSaleValues },
+      { new: true, runValidators: true }
+    );
+    if (!updatedSale) {
+      await InventoryItem.bulkWrite(appliedStockChanges.map(({ id, field, delta }) => ({
+        updateOne: { filter: { id }, update: { $inc: { [field]: -delta } } }
+      })));
+      return res.status(409).json({ error: 'POS sale changed while you were editing it. Refresh and try again.' });
+    }
+  } catch (error) {
+    if (appliedStockChanges.length) {
+      await InventoryItem.bulkWrite(appliedStockChanges.map(({ id, field, delta }) => ({
+        updateOne: { filter: { id }, update: { $inc: { [field]: -delta } } }
+      })));
+    }
+    throw error;
+  }
+
+  let receivable = null;
+  if (payment === 'CREDIT') {
+    receivable = await Receivable.findOneAndUpdate(
+      { id: sale.id },
+      {
+        $set: {
+          date, customer, phone: customerPhone,
+          details: `${newSaleValues.itemsSummary}${delivery ? ` • Delivery fee Rs. ${deliveryFeeRs.toLocaleString()}` : ''}`,
+          amount: totalRs
+        },
+        $setOnInsert: { uid: String(sale.id), id: String(sale.id), status: 'Pending' }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    await Receivable.deleteOne({ id: sale.id });
+  }
+
+  const oldVault = await DailyVault.findOne({ uid: sale.date });
+  if (oldVault) oldVault.posSales = (oldVault.posSales || []).filter((entry) => String(entry.id) !== String(sale.id));
+  const newVault = date === sale.date ? oldVault : await DailyVault.findOne({ uid: date });
+  if (date === sale.date) {
+    const netChanges = new Map();
+    for (const id of new Set([...oldById.keys(), ...newById.keys()])) {
+      const old = oldById.get(id);
+      const next = newById.get(id);
+      const quantity = (next?.quantity || 0) - (old?.quantity || 0);
+      if (quantity) netChanges.set(id, { field: next?.field || old?.field, quantity });
+    }
+    adjustDailyVaultStock(newVault, netChanges, 1);
+  } else {
+    adjustDailyVaultStock(oldVault, oldById, -1);
+    adjustDailyVaultStock(newVault, newById, 1);
+  }
+  if (newVault) {
+    newVault.posSales = (newVault.posSales || []).filter((entry) => String(entry.id) !== String(sale.id));
+    newVault.posSales.push(clean(updatedSale.toObject()));
+  }
+  if (oldVault) await oldVault.save();
+  if (newVault && newVault !== oldVault) await newVault.save();
+
+  const previousPhone = phoneKey(sale.customerPhone);
+  const nextPhone = phoneKey(customerPhone);
+  if (previousPhone !== nextPhone || sale.customer !== customer || sale.customerPhone !== customerPhone ||
+      Number(sale.totalRs || 0) !== totalRs || sale.date !== date) {
+    const customerDocs = await Customer.find().lean();
+    for (const phone of new Set([previousPhone, nextPhone].filter(Boolean))) {
+      let customerDoc = customerDocs.find((entry) => phoneKey(entry.phone) === phone);
+      const ownOldSale = phone === previousPhone ? 1 : 0;
+      const ownNewSale = phone === nextPhone ? 1 : 0;
+      if (!customerDoc && ownNewSale) {
+        customerDoc = await Customer.create({
+          uid: phone, id: phone, name: customer, phone: customerPhone,
+          visitCount: 0, totalSpent: 0, lastVisit: '', loyaltyPoints: 0, loyaltyKgRemainder: 0
+        });
+      }
+      if (!customerDoc) continue;
+      const totalDelta = (ownNewSale ? totalRs : 0) - (ownOldSale ? Number(sale.totalRs || 0) : 0);
+      const remainingSales = await PosSale.find({ customerPhone: { $exists: true } })
+        .select('id date time customerPhone').lean();
+      const latestDate = remainingSales
+        .filter((entry) => String(entry.id) !== String(sale.id) && phoneKey(entry.customerPhone) === phone)
+        .map((entry) => ({ date: entry.date, time: entry.time }))
+        .concat(ownNewSale ? [{ date, time }] : [])
+        .sort((a, b) => `${b.date || ''} ${b.time || ''}`.localeCompare(`${a.date || ''} ${a.time || ''}`))[0]?.date || '';
+      await Customer.updateOne(
+        { _id: customerDoc._id },
+        { $set: {
+          visitCount: Math.max(0, Number(customerDoc.visitCount || 0) - ownOldSale + ownNewSale),
+          totalSpent: Math.max(0, Number(customerDoc.totalSpent || 0) + totalDelta),
+          lastVisit: latestDate,
+          ...(ownNewSale ? { name: customer, phone: customerPhone } : {})
+        } }
+      );
+    }
+  }
+
+  res.json({ sale: clean(updatedSale.toObject()), receivable: receivable ? clean(receivable.toObject()) : null });
 });
 
 router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {

@@ -259,6 +259,69 @@
     </div>
   </div>
 
+  <div id="pos-sale-edit-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-yellow-500/40 rounded-2xl max-w-3xl w-full max-h-[92vh] overflow-y-auto shadow-2xl">
+      <div class="sticky top-0 z-10 bg-slate-900 px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h3 class="font-black text-white">Edit Completed POS Sale</h3>
+          <p id="pos-sale-edit-id" class="text-xs text-slate-400 mt-1"></p>
+        </div>
+        <button type="button" onclick="cancelPosSaleEdit()" class="text-slate-400 hover:text-white" aria-label="Close sale editor"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+      <form id="pos-sale-edit-form" onsubmit="savePosSaleEdit(event)" class="p-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <label class="text-xs font-semibold text-slate-300">Customer
+            <input id="pos-sale-edit-customer" required maxlength="120" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Phone
+            <input id="pos-sale-edit-phone" maxlength="30" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Sale date
+            <input id="pos-sale-edit-date" type="date" required class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Sale time
+            <input id="pos-sale-edit-time" required class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Payment method
+            <select id="pos-sale-edit-payment" onchange="updatePosSaleEditTotals()" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+              <option value="CASH">Cash Payment</option>
+              <option value="CARD">Card / POS Machine</option>
+              <option value="QR / TRANSFER">LankaQR / Bank Transfer</option>
+              <option value="CREDIT">Hotel / Regular Credit</option>
+            </select>
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Discount (Rs.)
+            <input id="pos-sale-edit-discount" type="number" min="0" step="1" required oninput="updatePosSaleEditTotals()" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <label class="flex items-center gap-2 self-end rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200">
+            <input id="pos-sale-edit-delivery" type="checkbox" onchange="updatePosSaleEditTotals()" class="accent-yellow-400"> Delivery
+          </label>
+          <label class="text-xs font-semibold text-slate-300">Delivery fee (Rs.)
+            <input id="pos-sale-edit-delivery-fee" type="number" min="0" step="1" oninput="updatePosSaleEditTotals()" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="text-sm font-bold text-white">Sale items</h4>
+            <button type="button" onclick="addPosSaleEditItem()" class="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700"><i class="fa-solid fa-plus mr-1"></i>Add item</button>
+          </div>
+          <div id="pos-sale-edit-items" class="space-y-2"></div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label class="text-xs font-semibold text-slate-300">Cash received (Rs.)
+            <input id="pos-sale-edit-cash" type="number" min="0" step="1" class="mt-1 w-full px-3 py-2 rounded-lg text-sm">
+          </label>
+          <div class="rounded-lg bg-slate-950 p-3 text-xs text-slate-300">Subtotal <strong id="pos-sale-edit-subtotal" class="float-right text-white">Rs. 0</strong><br><span class="block mt-2">Bill total</span><strong id="pos-sale-edit-total" class="float-right text-yellow-300">Rs. 0</strong></div>
+          <p class="sm:col-span-1 text-[11px] leading-5 text-amber-200">Changing items updates inventory stock. Collected credit sales cannot be edited. For sales with loyalty points/progress, customer phone and items are locked to protect the loyalty balance.</p>
+        </div>
+        <div class="flex justify-end gap-2 border-t border-slate-800 pt-4">
+          <button type="button" onclick="cancelPosSaleEdit()" class="rounded-lg bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700">Cancel</button>
+          <button id="pos-sale-edit-save" type="submit" class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-extrabold text-slate-950 hover:bg-emerald-400"><i class="fa-solid fa-check mr-1"></i>Save Sale</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL 1: THERMAL RECEIPT -->
   <div id="receipt-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-yellow-500/40 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl">
@@ -979,7 +1042,7 @@
                 <span id="pos-change-label" class="font-bold text-emerald-200">Balance to return</span>
                 <span id="pos-change-amount" class="font-black text-emerald-300">Rs. 0</span>
               </div>
-              <button onclick="completePosSale()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3.5 px-4 rounded-xl text-sm uppercase tracking-wider transition shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"><i class="fa-solid fa-receipt"></i> Complete Sale & Print Receipt</button>
+              <button id="pos-complete-sale-button" onclick="completePosSale()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3.5 px-4 rounded-xl text-sm uppercase tracking-wider transition shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"><i class="fa-solid fa-receipt"></i> Complete Sale & Print Receipt</button>
             </div>
           </div>
         </div>
