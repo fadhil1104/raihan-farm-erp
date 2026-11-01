@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const { randomInt } = require('node:crypto');
 
 let staffMigration;
+let connectionPromise;
 
 async function migrateLegacyEmployeeData() {
   const db = mongoose.connection.db;
@@ -100,8 +101,22 @@ async function migrateLegacyEmployeeData() {
 module.exports = async function connectDB() {
   const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/raihan_farm_erp';
   mongoose.set('strictQuery', true);
-  if (mongoose.connection.readyState !== 1) await mongoose.connect(uri);
-  if (!staffMigration) staffMigration = migrateLegacyEmployeeData();
+  if (mongoose.connection.readyState !== 1) {
+    if (!connectionPromise) {
+      connectionPromise = mongoose.connect(uri);
+    }
+    try {
+      await connectionPromise;
+    } finally {
+      connectionPromise = undefined;
+    }
+  }
+  if (!staffMigration) {
+    staffMigration = migrateLegacyEmployeeData().catch((error) => {
+      staffMigration = undefined;
+      throw error;
+    });
+  }
   await staffMigration;
   console.log(`MongoDB connected: ${mongoose.connection.host}/${mongoose.connection.name}`);
 };
