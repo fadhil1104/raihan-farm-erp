@@ -2489,28 +2489,56 @@ async function printPosReceiptAndOpenDrawer(sale) {
   if (!qzTray?.websocket || !qzTray?.printers || !qzTray?.configs || !qzTray?.print) {
     throw new Error('QZ Tray client is unavailable. Restart the POS app and make sure QZ Tray is installed.');
   }
-  if (!qzTray.websocket.isActive()) await qzTray.websocket.connect();
-  const printer = await qzTray.printers.getDefault();
-  if (!printer) throw new Error('No default QZ Tray printer is configured.');
+  if (!qzTray.websocket.isActive()) {
+    try {
+      await qzTray.websocket.connect({ retries: 5, delay: 1 });
+    } catch (error) {
+      throw new Error(`Could not connect to QZ Tray. Make sure it is running on this POS computer and allow the website connection if prompted. ${error.message || error}`);
+    }
+  }
+  let printer;
+  try {
+    printer = await qzTray.printers.getDefault();
+  } catch (error) {
+    throw new Error(`QZ Tray is connected, but it could not read the computer's default printer. ${error.message || error}`);
+  }
+  if (!printer) throw new Error('QZ Tray is connected, but this computer has no default printer selected.');
   const config = qzTray.configs.create(printer, {
     jobName: `POS receipt ${sale.id}`,
     margins: 0,
-    orientation: 'portrait',
-    units: 'mm',
-    size: { width: 80, height: Math.max(100, 65 + (sale.itemsDetails || []).length * 12), custom: true }
+    orientation: 'portrait'
   });
-  await qzTray.print(config, [{
-    type: 'raw',
-    format: 'command',
-    flavor: 'plain',
-    data: '\x1B\x70\x00\x19\xFA'
-  }]);
-  await qzTray.print(config, [{
-    type: 'pixel',
-    format: 'html',
-    flavor: 'plain',
-    data: posSaleReceiptHtml(sale)
-  }]);
+  let receiptError = null;
+  let drawerError = null;
+  try {
+    await qzTray.print(config, [{
+      type: 'pixel',
+      format: 'html',
+      flavor: 'plain',
+      data: posSaleReceiptHtml(sale),
+      options: {
+        pageWidth: 3.15,
+        pageHeight: Math.max(4, 2.5 + (sale.itemsDetails || []).length * 0.45)
+      }
+    }]);
+  } catch (error) {
+    receiptError = error;
+    console.error(`POS receipt print failed for sale ${sale.id}:`, error);
+  }
+
+  try {
+    await qzTray.print(config, [{
+      type: 'raw',
+      format: 'command',
+      flavor: 'plain',
+      data: '\x1B\x70\x00\x19\xFA'
+    }]);
+  } catch (error) {
+    drawerError = error;
+    console.error(`POS cash drawer pulse failed for sale ${sale.id}:`, error);
+  }
+
+  return { printer, receiptPrinted: !receiptError, drawerOpened: !drawerError, receiptError, drawerError };
 }
 
 async function confirmPosSale() {
@@ -2593,14 +2621,19 @@ async function confirmPosSale() {
   pendingReceiptRedemptionSaleId = sale.loyaltyPointsRedeemed > 0 ? sale.id : null;
   saveState();
   try {
-    await flushNow();
-    if (savePending || saveInFlight) {
-      throw new Error('The sale is saved on this device but has not synced to the server.');
+    const printResult = await printPosReceiptAndOpenDrawer(sale);
+    if (printResult.receiptPrinted && sale.loyaltyPointsRedeemed > 0) {
+      finalizeLoyaltyRedemptionAfterPrint(sale.id);
     }
-    await printPosReceiptAndOpenDrawer(sale);
-    if (sale.loyaltyPointsRedeemed > 0) finalizeLoyaltyRedemptionAfterPrint(sale.id);
-    showToast(`Sale ${sale.id} saved, receipt sent to the QZ Tray printer, and cash drawer opened.`, 'success');
+    if (!printResult.receiptPrinted || !printResult.drawerOpened) {
+      const receiptStatus = printResult.receiptPrinted ? 'receipt sent' : `receipt failed (${printResult.receiptError?.message || 'unknown printer error'})`;
+      const drawerStatus = printResult.drawerOpened ? 'drawer opened' : `drawer failed (${printResult.drawerError?.message || 'unknown printer error'})`;
+      showToast(`Sale ${sale.id} saved to "${printResult.printer}", but ${receiptStatus}; ${drawerStatus}.`, 'error');
+    } else {
+      showToast(`Sale ${sale.id} saved. Receipt sent to "${printResult.printer}" and cash drawer opened.`, 'success');
+    }
   } catch (err) {
+    console.error(`POS receipt/drawer error for sale ${sale.id}:`, err);
     showToast(`Sale ${sale.id} was saved, but printing or drawer opening failed: ${err.message}`, 'error');
   }
 }
