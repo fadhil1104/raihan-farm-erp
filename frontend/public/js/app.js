@@ -2685,9 +2685,7 @@ async function confirmPosSale() {
     }
   } catch (err) {
     console.error(`POS receipt/drawer error for sale ${sale.id}:`, err);
-    $('receipt-modal').classList.remove('hidden');
-    $('receipt-saved-actions').classList.remove('hidden');
-    showToast(`Sale ${sale.id} was saved, but printing or drawer opening failed: ${err.message} Start QZ Tray, then retry from this receipt.`, 'error');
+    showToast(`Sale ${sale.id} was saved, but printing or drawer opening failed: ${err.message}`, 'error');
   }
 }
 function closeReceiptModal() {
