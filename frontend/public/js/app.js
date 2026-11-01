@@ -679,9 +679,7 @@ function syncTodayIntoDailyVault() {
         .find((row) => String(row.id) === String(item.id));
       const existingItemSnapshot = (existingSnapshot?.inventorySnapshot || [])
         .find((row) => String(row.id) === String(item.id));
-      const addedStock = kg ? todaysBatches.reduce((total, batch) => total + batchOutputs(batch)
-        .filter((output) => String(output.categoryId) === String(item.id))
-        .reduce((sum, output) => sum + Number(output.actualKg || 0), 0), 0) : 0;
+      const addedStock = 0;
       let soldStock = 0;
       todaysSales.forEach((sale) => {
         if (Array.isArray(sale.itemsDetails)) {
@@ -923,14 +921,14 @@ function addSlaughterOutputRow(containerId, output = {}) {
   row.dataset.outputRow = 'true';
   row.innerHTML = `
     <div>
-      <label class="block text-[11px] text-slate-400 mb-1">Dressed Inventory Item</label>
+      <label class="block text-[11px] text-slate-400 mb-1">Inventory Item to Verify</label>
       <select data-output-category onchange="calculateSlaughterPreview()" class="w-full px-3 py-2 rounded-lg text-sm font-semibold">
         ${items.length ? items.map((item) => `<option value="${esc(item.id)}" ${String(item.id) === String(output.categoryId || '') ? 'selected' : ''}>${esc(item.name)}</option>`).join('') : '<option value="">Add kg-based meat inventory first</option>'}
       </select>
     </div>
     <div>
-      <label class="block text-[11px] text-slate-400 mb-1">Actual Dressed Weight (kg)</label>
-      <input data-output-weight type="number" min="0.01" step="0.01" value="${output.actualKg ? esc(output.actualKg) : ''}" placeholder="Enter dressed weight" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2 rounded-lg text-sm font-bold">
+      <label class="block text-[11px] text-slate-400 mb-1">Dressed Weight to Verify (kg)</label>
+      <input data-output-weight type="number" min="0.01" step="0.01" value="${output.actualKg ? esc(output.actualKg) : ''}" placeholder="Enter weight to verify" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2 rounded-lg text-sm font-bold">
     </div>
     <div class="flex items-end">
       <button type="button" onclick="removeSlaughterOutputRow(this)" aria-label="Remove dressed inventory item" class="w-full sm:w-auto px-3 py-2 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10">
@@ -1019,7 +1017,7 @@ function calculateSlaughterPreview() {
   $('prev-expected-kg').innerText = `${(liveKg * 0.70).toFixed(2)} kg`;
   $('prev-std-waste').innerText = `(Std 30% Waste: ${(liveKg * 0.30).toFixed(2)} kg)`;
   $('prev-actual-waste').innerText = `${actualWasteKg.toFixed(2)} kg (${actualWastePct.toFixed(1)}%)`;
-  $('prev-net-stock').innerText = `+${actualKg.toFixed(2)} kg`;
+  $('prev-net-stock').innerText = `${actualKg.toFixed(2)} kg`;
   $('sl-dead-count').max = String(intakeCount);
   $('sl-slaughter-count').max = String(Math.max(0, intakeCount - deadCount));
   $('sl-slaughter-live-kg').max = String(intakeLiveKg);
@@ -1076,18 +1074,13 @@ function recordSlaughterBatch() {
     expectedKg: +(slaughterLiveKg * 0.70).toFixed(2), actualKg, wasteKg,
     wastePct: +((wasteKg / slaughterLiveKg) * 100).toFixed(1)
   });
-  outputs.forEach((output) => {
-    const invItem = state.inventory.find((item) => String(item.id) === output.categoryId);
-    invItem.stockKg = +(Number(invItem.stockKg || 0) + output.actualKg).toFixed(2);
-  });
-
   ['sl-slaughter-count', 'sl-slaughter-live-kg'].forEach((id) => { $(id).value = ''; });
   $('sl-dead-count').value = '0';
   $('slaughter-output-rows').innerHTML = '';
   addSlaughterOutputRow('slaughter-output-rows');
   calculateSlaughterPreview();
   saveState();
-  showToast(`Slaughter batch saved! +${actualKg.toFixed(1)} kg added across ${outputs.length} dressed item${outputs.length === 1 ? '' : 's'}.`, 'success');
+  showToast('Evening double-check saved. Inventory was not changed.', 'success');
 }
 
 function dateTimeLocalValue(value) {
@@ -1118,24 +1111,6 @@ function openSlaughterEdit(id) {
 
 function closeSlaughterEdit() { $('slaughter-edit-modal').classList.add('hidden'); }
 
-function adjustVaultSnapshot(vault, output, deltaKg) {
-  if (!vault || !Array.isArray(vault.inventorySnapshot) || !deltaKg) return;
-  let row = vault.inventorySnapshot.find((entry) => String(entry.id) === String(output.categoryId));
-  if (!row && deltaKg > 0) {
-    const item = state.inventory.find((entry) => String(entry.id) === String(output.categoryId));
-    row = { id: output.categoryId, name: output.categoryName, openingKg: 0, slaughterInKg: 0, soldKg: 0, closingKg: 0, pricePerKg: item ? item.pricePerKg : 0 };
-    vault.inventorySnapshot.push(row);
-  }
-  if (row) {
-    row.slaughterInKg = Math.max(0, Number(row.slaughterInKg || 0) + deltaKg);
-    row.closingKg = Math.max(0, Number(row.closingKg || 0) + deltaKg);
-    if (row.unitType) {
-      row.addedStock = Math.max(0, Number(row.addedStock || 0) + deltaKg);
-      row.closingStock = Math.max(0, Number(row.closingStock || 0) + deltaKg);
-    }
-  }
-}
-
 function updateBatchVault(oldBatch, newBatch) {
   if (!state.dailyVault) state.dailyVault = {};
   const oldDay = String(oldBatch.date).slice(0, 10), newDay = String(newBatch.date).slice(0, 10);
@@ -1143,12 +1118,10 @@ function updateBatchVault(oldBatch, newBatch) {
   const newVault = state.dailyVault && state.dailyVault[newDay];
   if (oldVault) {
     oldVault.slaughterBatches = oldVault.slaughterBatches.filter((entry) => entry.id !== oldBatch.id);
-    batchOutputs(oldBatch).forEach((output) => adjustVaultSnapshot(oldVault, output, -Number(output.actualKg || 0)));
   }
   if (newVault) {
     newVault.slaughterBatches = newVault.slaughterBatches.filter((entry) => entry.id !== newBatch.id);
     newVault.slaughterBatches.push({ ...newBatch });
-    batchOutputs(newBatch).forEach((output) => adjustVaultSnapshot(newVault, output, Number(output.actualKg || 0)));
   }
 }
 
@@ -1182,24 +1155,6 @@ function saveSlaughterEdit() {
     return showToast('Enter valid intake and slaughter details using the same animal type. Slaughter count and weight cannot exceed the intake remaining after deaths.', 'error');
   }
   const oldBatch = { ...batch };
-  const stockChanges = new Map();
-  batchOutputs(oldBatch).forEach((output) => {
-    stockChanges.set(String(output.categoryId), (stockChanges.get(String(output.categoryId)) || 0) - Number(output.actualKg || 0));
-  });
-  outputs.forEach((output) => {
-    stockChanges.set(output.categoryId, (stockChanges.get(output.categoryId) || 0) + output.actualKg);
-  });
-  for (const [categoryId, delta] of stockChanges) {
-    const item = state.inventory.find((entry) => String(entry.id) === categoryId);
-    if (item && Number(item.stockKg || 0) + delta < -0.001) {
-      return showToast(`Cannot update this batch: ${item.name} has less current stock than the original batch weight.`, 'error');
-    }
-  }
-  stockChanges.forEach((delta, categoryId) => {
-    const item = state.inventory.find((entry) => String(entry.id) === categoryId);
-    if (item) item.stockKg = Math.max(0, +(Number(item.stockKg || 0) + delta).toFixed(2));
-  });
-
   const date = new Date(dateValue);
   const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
   Object.assign(batch, {
