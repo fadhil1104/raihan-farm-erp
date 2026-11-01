@@ -2796,26 +2796,44 @@ window.addEventListener('afterprint', () => {
 });
 
 // ---------- MODULE 7: deliveries & subscriptions ----------
-function getDeliveryDateOption(option) {
-  return option === 'TODAY' ? getTodayDate() : getTomorrowDate();
+function setDeliveryDateInputDefaults() {
+  const today = getTodayDate();
+  ['del-date', 'sub-push-date'].forEach((id) => {
+    const input = $(id);
+    input.min = today;
+    if (!input.value || input.value < today) input.value = today;
+  });
+}
+
+function getSelectedDeliveryDate(inputId) {
+  const input = $(inputId);
+  const today = getTodayDate();
+  input.min = today;
+  const date = input.value;
+  const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
+  if (!parsedDate || Number.isNaN(parsedDate.getTime()) || date < today || parsedDate.toISOString().slice(0, 10) !== date) {
+    showToast('Choose today or a future delivery date.', 'error');
+    return null;
+  }
+  return date;
 }
 
 function addDelivery() {
   const customer = $('del-customer').value.trim();
   const items = $('del-items').value.trim();
   if (!customer || !items) return showToast('Please enter customer and meat order details.', 'error');
-  const dateOption = $('del-date-option').value;
-  const isToday = dateOption === 'TODAY';
+  const date = getSelectedDeliveryDate('del-date');
+  if (!date) return;
   const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer, phone: $('del-phone').value.trim(), area: $('del-area').value.trim(),
-    items, date: getDeliveryDateOption(dateOption), slot: $('del-slot').value,
+    items, date, slot: $('del-slot').value,
     rider: (riders[0] || state.staff[0] || { name: '-' }).name,
-    status: isToday ? 'Scheduled for Today' : 'Scheduled for Tomorrow'
+    status: 'Scheduled'
   });
   ['del-customer', 'del-phone', 'del-area', 'del-items'].forEach((id) => { $(id).value = ''; });
   saveState();
-  showToast(`Scheduled ${isToday ? 'same-day' : 'next-day'} delivery for ${customer}`, 'success');
+  showToast(`Scheduled delivery for ${customer} on ${date}.`, 'success');
 }
 
 function updateDeliveryStatus(id, status) {
@@ -2855,17 +2873,17 @@ function addSubscription() {
 function pushSubToSelectedDate(subId) {
   const sub = state.subscriptions.find((s) => s.id === subId);
   if (!sub) return;
-  const dateOption = $('sub-push-date-option').value;
-  const isToday = dateOption === 'TODAY';
+  const date = getSelectedDeliveryDate('sub-push-date');
+  if (!date) return;
   const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer: `${sub.customer} (Weekly Sub)`, phone: sub.phone, area: sub.area, items: sub.pack,
-    date: getDeliveryDateOption(dateOption), slot: 'Morning (07:00 AM - 10:00 AM)',
+    date, slot: 'Morning (07:00 AM - 10:00 AM)',
     rider: (riders[0] || state.staff[0] || { name: '-' }).name,
-    status: isToday ? 'Scheduled for Today' : 'Scheduled for Tomorrow'
+    status: 'Scheduled'
   });
   saveState();
-  showToast(`${sub.customer}'s weekly box added to ${isToday ? "today's" : "tomorrow's"} dispatch!`, 'success');
+  showToast(`${sub.customer}'s weekly box added to dispatch for ${date}.`, 'success');
 }
 
 function ensureCoaState() {
@@ -3369,7 +3387,7 @@ function renderAll() {
 
   // Deliveries & subscriptions
   const riders = activeStaff.map((member) => member.name);
-  const statuses = ['Scheduled for Today', 'Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
+  const statuses = ['Scheduled', 'Scheduled for Today', 'Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
   $('deliveries-tbody').innerHTML = state.deliveries.map((d) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(d.date)}</div><div class="text-xs text-slate-400">${esc(d.slot)}</div></td>
@@ -3438,6 +3456,7 @@ setInterval(updateClock, 1000);
 
 async function bootstrap() {
   updateClock();
+  setDeliveryDateInputDefaults();
   inventoryUnitFormChanged();
   Api.onUnauthorized(() => {
     currentUser = null; state = null; Api.clearToken();

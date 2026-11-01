@@ -1240,7 +1240,7 @@
     <section id="tab-deliveries" class="space-y-6 hidden">
       <div class="border-b border-slate-800 pb-4">
         <h2 class="text-2xl font-black">Delivery Dispatch & Weekly Subscriptions</h2>
-        <p class="text-slate-400 text-sm">Schedule same-day or next-day meat deliveries, manage weekly recurring subscribers, and send 1-click WhatsApp customer updates.</p>
+        <p class="text-slate-400 text-sm">Schedule deliveries for today or any future date, manage weekly recurring subscribers, and send 1-click WhatsApp customer updates.</p>
       </div>
       <div class="card-highlight p-5">
         <h3 class="font-bold text-xs uppercase tracking-wider text-yellow-400 mb-3 flex items-center gap-2"><i class="fa-solid fa-truck-fast"></i> Schedule a Delivery</h3>
@@ -1249,10 +1249,7 @@
           <input type="text" id="del-phone" placeholder="WhatsApp phone (optional)" class="px-3 py-2 rounded-lg text-sm">
           <input type="text" id="del-area" placeholder="Delivery Route / Address" class="px-3 py-2 rounded-lg text-sm">
           <input type="text" id="del-items" placeholder="Order details" class="px-3 py-2 rounded-lg text-sm">
-          <select id="del-date-option" aria-label="Delivery date" class="px-3 py-2 rounded-lg text-sm">
-            <option value="TODAY">Today — same-day delivery</option>
-            <option value="TOMORROW" selected>Tomorrow — next-day delivery</option>
-          </select>
+          <input type="date" id="del-date" aria-label="Delivery date" required class="px-3 py-2 rounded-lg text-sm">
           <select id="del-slot" class="px-3 py-2 rounded-lg text-sm">
             <option value="Morning (07:00 AM - 10:00 AM)">Morning (7 AM - 10 AM)</option>
             <option value="Midday (11:00 AM - 02:00 PM)">Midday (11 AM - 2 PM)</option>
@@ -1262,7 +1259,7 @@
         </div>
       </div>
       <div class="card p-5 overflow-x-auto">
-        <h3 class="font-bold text-base text-white mb-3">Next-Day Delivery Dispatch Board</h3>
+        <h3 class="font-bold text-base text-white mb-3">Delivery Dispatch Board</h3>
         <table class="w-full text-left border-collapse text-sm">
           <thead>
             <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
@@ -1275,7 +1272,7 @@
       <div class="card p-5 space-y-4">
         <div class="border-b border-slate-800 pb-3">
           <h3 class="font-bold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-calendar-check"></i> Weekly Recurring Meat Box Subscriptions</h3>
-          <p class="text-xs text-slate-400">Choose today or tomorrow, then push any weekly subscriber directly into the delivery dispatch queue.</p>
+          <p class="text-xs text-slate-400">Choose a dispatch date, then push any weekly subscriber directly into the delivery dispatch queue.</p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
           <input type="text" id="sub-customer" placeholder="Subscriber Name" class="px-3 py-2 rounded-lg text-sm">
@@ -1288,10 +1285,7 @@
             <option value="Every Sunday">Every Sunday</option>
             <option value="Every Wednesday">Every Wednesday</option>
           </select>
-          <select id="sub-push-date-option" aria-label="Subscription dispatch date" class="px-3 py-2 rounded-lg text-sm">
-            <option value="TODAY">Push to today</option>
-            <option value="TOMORROW" selected>Push to tomorrow</option>
-          </select>
+          <input type="date" id="sub-push-date" aria-label="Subscription dispatch date" required class="px-3 py-2 rounded-lg text-sm">
           <div class="flex gap-2">
             <input type="number" id="sub-price" placeholder="Monthly Rs." class="w-full px-3 py-2 rounded-lg text-sm">
             <button onclick="addSubscription()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black rounded-lg px-4 py-2 text-xs shrink-0 transition">+ Add Sub</button>
