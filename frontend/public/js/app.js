@@ -57,8 +57,7 @@ let activeReceiptPrintSaleId = null;
 let receiptPrintStyle = null;
 let receiptPrintOriginalStyle = null;
 let editingStaffId = null;
-let editingPosSaleId = null;
-let posSaleEditItems = [];
+let editingPosPaymentSaleId = null;
 let inventoryStockAdditions = null;
 let inventoryStockAdditionsDate = '';
 let inventoryStockAdditionsRequestId = 0;
@@ -171,203 +170,78 @@ function renderPosSalesHistory() {
       <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}${p.delivery ? `<span class="mt-1 inline-block rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">Delivery · Rs. ${Number(p.deliveryFeeRs || 0).toLocaleString()}</span>` : ''}</td>
       <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
-      <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
+      <td data-label="Payment">${canManageSales && editingPosPaymentSaleId === String(p.id)
+        ? `<select id="pos-payment-edit" aria-label="Payment method for sale ${esc(p.id)}" class="min-w-36 rounded-lg border border-slate-600 bg-slate-900 px-2 py-1.5 text-xs font-bold">${[
+          ['CASH', 'Cash Payment'],
+          ['CARD', 'Card / POS Machine'],
+          ['QR / TRANSFER', 'LankaQR / Bank Transfer'],
+          ['CREDIT', 'Hotel / Regular Credit']
+        ].map(([value, label]) => `<option value="${value}"${p.payment === value ? ' selected' : ''}>${label}</option>`).join('')}</select>`
+        : `<span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span>`}</td>
       <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
-      ${canManageSales ? `<td data-label="Actions" class="text-right whitespace-nowrap">
-        <button type="button" onclick="editPosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
-        <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button>
-      </td>` : ''}
+      ${canManageSales ? `<td data-label="Actions" class="text-right whitespace-nowrap">${editingPosPaymentSaleId === String(p.id)
+        ? `<button type="button" onclick="savePosPaymentEdit(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"><i class="fa-solid fa-check mr-1"></i>Save</button>
+           <button type="button" onclick="cancelPosPaymentEdit()" class="ml-1 rounded-lg bg-slate-700 px-2.5 py-1.5 text-xs font-bold text-white transition hover:bg-slate-600">Cancel</button>`
+        : `<button type="button" onclick="editPosPayment(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
+           <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button>`}</td>` : ''}
     </tr>`).join('');
   renderCashierDrawer();
 }
 
-function editPosSale(saleId) {
-  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS sales.', 'error');
-  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
-  if (!sale) {
+function editPosPayment(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS payment methods.', 'error');
+  if (!(state?.posSales || []).some((sale) => String(sale.id) === String(saleId))) {
     return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
   }
-  editingPosSaleId = String(saleId);
-  posSaleEditItems = (sale.itemsDetails || []).map((item) => ({ ...item }));
-  $('pos-sale-edit-id').innerText = `Receipt ${sale.id} · ${sale.date} ${sale.time}`;
-  $('pos-sale-edit-customer').value = sale.customer || '';
-  $('pos-sale-edit-phone').value = sale.customerPhone || '';
-  $('pos-sale-edit-date').value = sale.date || '';
-  $('pos-sale-edit-time').value = sale.time || '';
-  $('pos-sale-edit-payment').value = sale.payment || 'CASH';
-  $('pos-sale-edit-discount').value = Number(sale.discount || 0);
-  $('pos-sale-edit-delivery').checked = Boolean(sale.delivery);
-  $('pos-sale-edit-delivery-fee').value = Number(sale.deliveryFeeRs || 0);
-  $('pos-sale-edit-cash').value = Number(sale.cashReceivedRs ?? sale.totalRs ?? 0);
-  renderPosSaleEditItems();
-  updatePosSaleEditTotals();
-  $('pos-sale-edit-modal').classList.remove('hidden');
-  $('pos-sale-edit-modal').classList.add('flex');
+  editingPosPaymentSaleId = String(saleId);
+  renderPosSalesHistory();
 }
 
-function cancelPosSaleEdit() {
-  editingPosSaleId = null;
-  posSaleEditItems = [];
-  $('pos-sale-edit-modal').classList.add('hidden');
-  $('pos-sale-edit-modal').classList.remove('flex');
+function cancelPosPaymentEdit() {
+  editingPosPaymentSaleId = null;
+  renderPosSalesHistory();
 }
 
-function renderPosSaleEditItems() {
-  const itemsContainer = $('pos-sale-edit-items');
-  if (!posSaleEditItems.length) {
-    itemsContainer.innerHTML = '<p class="rounded-lg border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No items. Add at least one product to this sale.</p>';
-    return;
-  }
-  const products = (state.inventory || []).map((item) =>
-    `<option value="${esc(String(item.id))}">${esc(item.name)} · ${esc(inventoryUnitLabel(item))}</option>`
-  ).join('');
-  itemsContainer.innerHTML = posSaleEditItems.map((item, index) => `
-    <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 rounded-lg border border-slate-700 bg-slate-950 p-2.5">
-      <label class="col-span-2 sm:col-span-4 text-[10px] font-semibold text-slate-400">Product
-        <select onchange="changePosSaleEditProduct(${index}, this.value)" class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-white">
-          ${products}
-        </select>
-      </label>
-      <label class="col-span-1 sm:col-span-2 text-[10px] font-semibold text-slate-400">Quantity
-        <input data-sale-item-quantity="${index}" type="number" min="0.01" step="any" value="${esc(item.quantity)}" oninput="updatePosSaleEditItem(${index}, 'quantity', this.value)" class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-white">
-      </label>
-      <label class="col-span-1 sm:col-span-2 text-[10px] font-semibold text-slate-400">Unit price
-        <input type="number" min="0" step="any" value="${esc(item.unitPrice)}" oninput="updatePosSaleEditItem(${index}, 'unitPrice', this.value)" class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-white">
-      </label>
-      <label class="col-span-1 sm:col-span-3 text-[10px] font-semibold text-slate-400">Line total (Rs.)
-        <input data-sale-item-total="${index}" type="number" min="0" step="1" value="${esc(item.lineTotal)}" oninput="updatePosSaleEditItem(${index}, 'lineTotal', this.value)" class="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-white">
-      </label>
-      <button type="button" onclick="removePosSaleEditItem(${index})" aria-label="Remove item" class="col-span-1 self-end rounded-md px-2 py-2 text-red-300 hover:bg-red-500/10"><i class="fa-solid fa-trash-can"></i></button>
-    </div>`).join('');
-  posSaleEditItems.forEach((item, index) => {
-    const select = itemsContainer.querySelectorAll('select')[index];
-    if (select) select.value = String(item.id);
-  });
-}
+async function savePosPaymentEdit(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS payment methods.', 'error');
+  if (editingPosPaymentSaleId !== String(saleId)) return;
+  const payment = $('pos-payment-edit')?.value;
+  if (!payment) return showToast('Select a valid payment method.', 'error');
 
-function addPosSaleEditItem() {
-  const item = (state.inventory || []).find((entry) => entry.id != null);
-  if (!item) return showToast('There are no inventory products to add.', 'error');
-  const unitType = inventoryUnit(item);
-  const unitPrice = inventoryPrice(item);
-  posSaleEditItems.push({
-    id: item.id, name: item.name, unitType, quantity: unitType === 'kg' ? 0.1 : 1,
-    unitLabel: inventoryUnitLabel(item), unitPrice, packWeightGrams: Number(item.packWeightGrams || 0),
-    weightKg: unitType === 'kg' ? 0.1 : 0, lineTotal: Math.round(unitPrice * (unitType === 'kg' ? 0.1 : 1))
-  });
-  renderPosSaleEditItems();
-  updatePosSaleEditTotals();
-}
-
-function changePosSaleEditProduct(index, productId) {
-  const product = (state.inventory || []).find((item) => String(item.id) === String(productId));
-  const line = posSaleEditItems[index];
-  if (!product || !line) return;
-  const unitType = inventoryUnit(product);
-  line.id = product.id;
-  line.name = `${product.name}${line.isLoyaltyFreeGiveaway ? ' - Loyalty Free Giveaway' : ''}`;
-  line.unitType = unitType;
-  line.unitLabel = inventoryUnitLabel(product);
-  line.packWeightGrams = Number(product.packWeightGrams || 0);
-  line.unitPrice = inventoryPrice(product);
-  if (unitType !== 'kg' && !Number.isInteger(Number(line.quantity))) line.quantity = 1;
-  line.weightKg = unitType === 'kg' ? Number(line.quantity) : 0;
-  line.lineTotal = line.isLoyaltyFreeGiveaway ? 0 : Math.round(Number(line.quantity) * line.unitPrice);
-  renderPosSaleEditItems();
-  updatePosSaleEditTotals();
-}
-
-function updatePosSaleEditItem(index, field, value) {
-  const item = posSaleEditItems[index];
-  if (!item) return;
-  const number = Number(value);
-  if (field === 'lineTotal' && item.isLoyaltyFreeGiveaway) return;
-  item[field] = Number.isFinite(number) ? number : 0;
-  if (field === 'quantity') {
-    item.weightKg = item.unitType === 'kg' ? item.quantity : 0;
-    if (!item.isLoyaltyFreeGiveaway) {
-      item.lineTotal = Math.round(item.quantity * Number(item.unitPrice || 0));
-      const lineTotalInput = $('pos-sale-edit-items').querySelector(`[data-sale-item-total="${index}"]`);
-      if (lineTotalInput) lineTotalInput.value = item.lineTotal;
-    }
-  } else if (field === 'unitPrice' && !item.isLoyaltyFreeGiveaway) {
-    item.lineTotal = Math.round(item.quantity * item.unitPrice);
-    const lineTotalInput = $('pos-sale-edit-items').querySelector(`[data-sale-item-total="${index}"]`);
-    if (lineTotalInput) lineTotalInput.value = item.lineTotal;
-  }
-  updatePosSaleEditTotals();
-}
-
-function removePosSaleEditItem(index) {
-  posSaleEditItems.splice(index, 1);
-  renderPosSaleEditItems();
-  updatePosSaleEditTotals();
-}
-
-function updatePosSaleEditTotals() {
-  if (!$('pos-sale-edit-subtotal')) return;
-  const subtotal = posSaleEditItems.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
-  const discount = Math.max(0, Number($('pos-sale-edit-discount').value) || 0);
-  const deliveryFee = $('pos-sale-edit-delivery').checked
-    ? Math.max(0, Number($('pos-sale-edit-delivery-fee').value) || 0) : 0;
-  $('pos-sale-edit-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
-  $('pos-sale-edit-total').innerText = `Rs. ${(Math.max(0, subtotal - discount) + deliveryFee).toLocaleString()}`;
-  $('pos-sale-edit-delivery-fee').disabled = !$('pos-sale-edit-delivery').checked;
-  const cashPayment = $('pos-sale-edit-payment').value === 'CASH';
-  $('pos-sale-edit-cash').disabled = !cashPayment;
-}
-
-async function savePosSaleEdit(event) {
-  event.preventDefault();
-  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS sales.', 'error');
-  const saleId = editingPosSaleId;
-  if (!saleId) return;
-  const saveButton = $('pos-sale-edit-save');
-  saveButton.disabled = true;
+  const saveButton = $('pos-history-tbody').querySelector('button[onclick^="savePosPaymentEdit"]');
+  if (saveButton) saveButton.disabled = true;
   try {
     await flushNow();
     if (savePending || saveInFlight) {
       throw new Error('Pending changes could not be saved. Wait for synchronization before editing this sale.');
     }
-    const subtotal = posSaleEditItems.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
-    const delivery = $('pos-sale-edit-delivery').checked;
-    const deliveryFeeRs = delivery ? Number($('pos-sale-edit-delivery-fee').value) : 0;
-    const totalRs = Math.max(0, subtotal - Number($('pos-sale-edit-discount').value)) + deliveryFeeRs;
-    const payment = $('pos-sale-edit-payment').value;
-    const cashReceivedRs = payment === 'CASH' ? Number($('pos-sale-edit-cash').value) : 0;
-    if (!posSaleEditItems.length || posSaleEditItems.some((item) =>
-      !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0 ||
-      !Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0 ||
-      !Number.isFinite(Number(item.lineTotal)) || Number(item.lineTotal) < 0)) {
-      throw new Error('Each sale item needs a valid quantity and price.');
-    }
-    if (!Number.isInteger(totalRs) || (payment === 'CASH' && (!Number.isInteger(cashReceivedRs) || cashReceivedRs < totalRs))) {
-      throw new Error('Enter a valid whole-number bill total and enough cash received.');
-    }
-    const result = await Api.updatePosSale(saleId, {
-      customer: $('pos-sale-edit-customer').value.trim(),
-      customerPhone: $('pos-sale-edit-phone').value.trim(),
-      date: $('pos-sale-edit-date').value,
-      time: $('pos-sale-edit-time').value.trim(),
-      payment,
-      itemsDetails: posSaleEditItems.map((item) => ({ ...item })),
-      discount: Number($('pos-sale-edit-discount').value),
-      delivery,
-      deliveryFeeRs,
-      cashReceivedRs
-    });
+    const result = await Api.updatePosSalePaymentMethod(saleId, payment);
     const saleIndex = state.posSales.findIndex((sale) => String(sale.id) === String(saleId));
     if (saleIndex !== -1) state.posSales[saleIndex] = result.sale;
-    state = await Api.getState();
-    ensureStateCollections();
-    cancelPosSaleEdit();
+    if (result.receivable) {
+      const receivableIndex = state.receivablesList.findIndex((entry) => String(entry.id) === String(saleId));
+      if (receivableIndex === -1) state.receivablesList.unshift(result.receivable);
+      else state.receivablesList[receivableIndex] = result.receivable;
+    } else {
+      state.receivablesList = state.receivablesList.filter((entry) => String(entry.id) !== String(saleId));
+    }
+    const daySales = state.dailyVault?.[result.sale.date]?.posSales;
+    if (Array.isArray(daySales)) {
+      const vaultSale = daySales.find((sale) => String(sale.id) === String(saleId));
+      if (vaultSale) Object.assign(vaultSale, {
+        payment: result.sale.payment,
+        cashReceivedRs: result.sale.cashReceivedRs,
+        changeRs: result.sale.changeRs
+      });
+    }
+    editingPosPaymentSaleId = null;
     renderAll();
     setSyncStatus('Synced from MongoDB');
-    showToast(`Sale ${saleId} updated.`, 'success');
+    showToast(`Payment method for sale ${saleId} updated to ${payment}.`, 'success');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
-    saveButton.disabled = false;
+    if (saveButton) saveButton.disabled = false;
   }
 }
 
@@ -847,16 +721,12 @@ async function logout() {
   state = null;
   posCart = [];
   pendingPosSale = null;
-  editingPosSaleId = null;
-  posSaleEditItems = [];
   pendingReceiptRedemptionSaleId = null;
   activeReceiptPrintSaleId = null;
   savePending = false;
   saveInFlight = false;
   stateVersion = 0;
   $('receipt-modal').classList.add('hidden');
-  $('pos-sale-edit-modal').classList.add('hidden');
-  $('pos-sale-edit-modal').classList.remove('flex');
   $('mobile-qr-modal').classList.add('hidden');
   $('login-username').value = '';
   $('login-password').value = '';
@@ -2325,7 +2195,7 @@ function lookupPosCustomer() {
   updatePosLoyaltySummary();
 }
 
-async function completePosSale() {
+function completePosSale() {
   if (posCart.length === 0) return showToast('Please add at least one item to the bill.', 'error');
   const customerPhone = $('pos-cust-phone').value.trim();
   const customerPhoneKey = phoneKey(customerPhone);
@@ -2405,18 +2275,11 @@ async function completePosSale() {
     loyaltyKgRemainderAfter: customerPhoneKey ? loyaltyPlan.loyaltyKgRemainderAfter : 0,
     loyaltyFreeGiveawayKg: customerPhoneKey ? loyaltyGiveawayKg : 0
   };
-  const completeButton = $('pos-complete-sale-button');
-  completeButton.disabled = true;
-  if (!window.confirm(`Complete sale ${receiptId} for ${customer}?\n\nTotal: Rs. ${grandTotal.toLocaleString()}\nPayment: ${payment}\n\nThe sale will be saved, the cash drawer opened, and the receipt sent to the QZ Tray default printer.`)) {
-    pendingPosSale = null;
-    completeButton.disabled = false;
-    return;
-  }
-  try {
-    await confirmPosSale();
-  } finally {
-    completeButton.disabled = false;
-  }
+  renderPosSaleReceipt(pendingPosSale);
+  $('receipt-review-note').classList.remove('hidden');
+  $('receipt-preview-actions').classList.remove('hidden');
+  $('receipt-saved-actions').classList.add('hidden');
+  $('receipt-modal').classList.remove('hidden');
 }
 
 function renderPosSaleReceipt(sale) {
@@ -2454,66 +2317,7 @@ function editPosBill() {
   $('receipt-modal').classList.add('hidden');
 }
 
-function posSaleReceiptHtml(sale) {
-  const rows = (sale.itemsDetails || []).map((item) => `
-    <tr>
-      <td>${esc(item.name)}${item.isPieces ? ' — Pieces' : ''}</td>
-      <td class="number">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || '')}</td>
-      <td class="number">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`}</td>
-    </tr>`).join('');
-  const subtotal = Number(sale.subtotal ?? (sale.itemsDetails || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0));
-  const logo = new URL('/raihan-farm-logo.jpeg', window.location.origin).href;
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-    @page{size:80mm auto;margin:0}*{box-sizing:border-box}body{width:74mm;margin:0;padding:3mm;font:10px/1.35 monospace;color:#111}
-    .center{text-align:center}.rule{border-top:1px dashed #555;margin:8px 0}.muted{color:#555;font-size:9px}
-    .row{display:flex;justify-content:space-between;margin:3px 0}.number{text-align:right;white-space:nowrap}
-    table{width:100%;border-collapse:collapse;font-size:9px}td{padding:3px 1px;vertical-align:top}td:first-child{width:48%}
-    td:nth-child(2){width:24%}td:nth-child(3){width:28%}.total{font-weight:bold;font-size:12px}
-    img{width:42px;height:42px;object-fit:cover}h3{margin:4px 0;font-size:13px}
-  </style></head><body>
-    <header class="center"><img src="${logo}"><h3>RAIHAN FARM SHOP</h3><div>Fresh Farm-to-Shop Poultry &amp; Meat</div><div class="muted">Mannar Road, Puttalam · Tel: 0786959777</div></header>
-    <div class="rule"></div><div>Receipt: <strong>${esc(sale.id)}</strong></div><div>Customer: ${esc(sale.customer)}</div>
-    <div>Phone: ${esc(sale.customerPhone || '—')}</div><div>Date: ${esc(sale.date)} ${esc(sale.time)}</div><div>Pay: ${esc(sale.payment)}</div>
-    <div class="rule"></div><table><tbody>${rows}</tbody></table><div class="rule"></div>
-    <div class="row"><span>Subtotal:</span><span>Rs. ${subtotal.toLocaleString()}</span></div>
-    <div class="row"><span>Discount:</span><span>- Rs. ${Number(sale.discount || 0).toLocaleString()}</span></div>
-    ${sale.delivery ? `<div class="row"><span>Delivery fee:</span><span>Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}</span></div>` : ''}
-    <div class="row total"><span>BILL TOTAL:</span><span>Rs. ${Number(sale.totalRs || 0).toLocaleString()}</span></div>
-    ${sale.payment === 'CASH' ? `<div class="row"><span>Customer paid:</span><span>Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}</span></div><div class="row"><span>Balance returned:</span><span>Rs. ${Number(sale.changeRs || 0).toLocaleString()}</span></div>` : ''}
-    <div class="rule"></div><div class="center muted">100% Halal · Freshly Dressed from Raihan Own Farm<br>Thank you for shopping at Raihan Farm Shop!</div>
-  </body></html>`;
-}
-
-async function printPosReceiptAndOpenDrawer(sale) {
-  const qzTray = window.qz;
-  if (!qzTray?.websocket || !qzTray?.printers || !qzTray?.configs || !qzTray?.print) {
-    throw new Error('QZ Tray client is unavailable. Restart the POS app and make sure QZ Tray is installed.');
-  }
-  if (!qzTray.websocket.isActive()) await qzTray.websocket.connect();
-  const printer = await qzTray.printers.getDefault();
-  if (!printer) throw new Error('No default QZ Tray printer is configured.');
-  const config = qzTray.configs.create(printer, {
-    jobName: `POS receipt ${sale.id}`,
-    margins: 0,
-    orientation: 'portrait',
-    units: 'mm',
-    size: { width: 80, height: Math.max(100, 65 + (sale.itemsDetails || []).length * 12), custom: true }
-  });
-  await qzTray.print(config, [{
-    type: 'raw',
-    format: 'command',
-    flavor: 'plain',
-    data: '\x1B\x70\x00\x19\xFA'
-  }]);
-  await qzTray.print(config, [{
-    type: 'pixel',
-    format: 'html',
-    flavor: 'plain',
-    data: posSaleReceiptHtml(sale)
-  }]);
-}
-
-async function confirmPosSale() {
+function confirmPosSale() {
   const sale = pendingPosSale;
   if (!sale) return showToast('No pending bill to save.', 'error');
 
@@ -2558,12 +2362,11 @@ async function confirmPosSale() {
   state.posSales.unshift({
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
-    totalKg: sale.totalKg, payment: sale.payment, subtotal: sale.subtotal, discount: sale.discount, totalRs: sale.totalRs,
+    totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs,
     delivery: sale.delivery, deliveryFeeRs: sale.deliveryFeeRs,
     cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
     loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
-    loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyKgRemainderAfter: sale.loyaltyKgRemainderAfter,
-    loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
+    loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
   });
   if (sale.payment === 'CREDIT') {
     state.receivablesList.unshift({
@@ -2586,23 +2389,15 @@ async function confirmPosSale() {
   updatePosLoyaltySummary();
   $('pos-discount').value = 0;
   updatePosCashSummary();
-  renderPosSaleReceipt(sale);
   $('receipt-review-note').classList.add('hidden');
   $('receipt-preview-actions').classList.add('hidden');
-  $('receipt-saved-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.remove('hidden');
+  $('receipt-close-button').classList.toggle('hidden', sale.loyaltyPointsRedeemed > 0);
+  $('receipt-print-button').innerText = sale.loyaltyPointsRedeemed > 0
+    ? 'Print Receipt & Redeem Points' : 'Print Thermal Receipt';
   pendingReceiptRedemptionSaleId = sale.loyaltyPointsRedeemed > 0 ? sale.id : null;
   saveState();
-  try {
-    await flushNow();
-    if (savePending || saveInFlight) {
-      throw new Error('The sale is saved on this device but has not synced to the server.');
-    }
-    await printPosReceiptAndOpenDrawer(sale);
-    if (sale.loyaltyPointsRedeemed > 0) finalizeLoyaltyRedemptionAfterPrint(sale.id);
-    showToast(`Sale ${sale.id} saved, receipt sent to the QZ Tray printer, and cash drawer opened.`, 'success');
-  } catch (err) {
-    showToast(`Sale ${sale.id} was saved, but printing or drawer opening failed: ${err.message}`, 'error');
-  }
+  showToast(`Sale ${sale.id} saved! Inventory updated and receipt ready.`, 'success');
 }
 function closeReceiptModal() {
   if (pendingReceiptRedemptionSaleId) {
