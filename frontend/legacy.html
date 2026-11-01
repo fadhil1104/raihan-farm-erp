@@ -280,6 +280,7 @@
         <div class="border-t-2 border-dashed border-slate-400 pt-2 space-y-1 text-xs">
           <div class="flex justify-between"><span>Subtotal:</span><span id="rc-subtotal">Rs. 0</span></div>
           <div class="flex justify-between text-slate-600"><span>Discount:</span><span id="rc-discount">- Rs. 0</span></div>
+          <div id="rc-delivery-fee-row" class="hidden flex justify-between text-slate-600"><span>Delivery fee:</span><span id="rc-delivery-fee">Rs. 0</span></div>
           <div class="flex justify-between font-black text-sm pt-1 border-t border-slate-300"><span>BILL TOTAL:</span><span id="rc-total">Rs. 0</span></div>
           <div id="rc-cash-paid-row" class="hidden flex justify-between"><span>Customer paid:</span><span id="rc-cash-paid">Rs. 0</span></div>
           <div id="rc-cash-change-row" class="hidden flex justify-between font-bold"><span>Balance returned:</span><span id="rc-cash-change">Rs. 0</span></div>
@@ -940,6 +941,17 @@
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-1">
                 <input type="tel" id="pos-cust-phone" oninput="lookupPosCustomer()" placeholder="Customer phone (optional; for loyalty)" autocomplete="tel" class="px-3 py-2 rounded-lg text-xs">
                 <input type="text" id="pos-cust-name" placeholder="Customer name (optional)" autocomplete="name" class="px-3 py-2 rounded-lg text-xs">
+                <fieldset class="sm:col-span-2 rounded-lg border border-slate-700 p-2.5">
+                  <legend class="px-1 text-[11px] font-bold text-slate-400">Fulfilment</legend>
+                  <div class="flex gap-5 text-xs">
+                    <label class="flex items-center gap-2 font-semibold text-slate-300"><input type="radio" name="pos-fulfilment" value="counter" checked onchange="onPosFulfilmentChanged()" class="accent-yellow-400"> Counter pickup</label>
+                    <label class="flex items-center gap-2 font-semibold text-slate-300"><input type="radio" name="pos-fulfilment" value="delivery" onchange="onPosFulfilmentChanged()" class="accent-yellow-400"> Delivery</label>
+                  </div>
+                </fieldset>
+                <label id="pos-delivery-fee-wrap" for="pos-delivery-fee" class="hidden sm:col-span-2 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3 text-xs font-bold text-sky-200">
+                  Delivery fee (Rs.)
+                  <input type="number" id="pos-delivery-fee" min="0" step="1" inputmode="numeric" oninput="renderPosCart()" placeholder="Enter delivery fee" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+                </label>
                 <select id="pos-pay-method" onchange="updatePosCashPayment()" class="px-3 py-2 rounded-lg text-xs font-bold sm:col-span-2">
                   <option value="CASH">Cash Payment</option>
                   <option value="CARD">Card / POS Machine</option>
@@ -958,6 +970,7 @@
             <div class="border-t border-slate-800 pt-4 space-y-3">
               <div class="flex justify-between items-center text-xs text-slate-400"><span>Subtotal:</span><span class="font-bold text-white" id="pos-subtotal">Rs. 0</span></div>
               <div class="flex justify-between items-center text-xs text-slate-400"><span>Discount (Rs.):</span><input type="number" id="pos-discount" value="0" min="0" oninput="renderPosCart()" class="w-24 px-2.5 py-1 rounded-lg text-right text-xs font-bold"></div>
+              <div id="pos-delivery-fee-summary" class="hidden justify-between items-center text-xs text-sky-300"><span>Delivery fee:</span><span class="font-bold" id="pos-delivery-fee-total">Rs. 0</span></div>
               <div class="flex justify-between items-center bg-slate-950 p-3.5 rounded-xl border border-yellow-500/30">
                 <div><span class="text-xs uppercase font-bold text-yellow-400 block">Grand Total</span><span class="text-[11px] text-slate-400" id="pos-total-weight">0.00 kg total meat</span></div>
                 <span class="text-2xl font-black text-white" id="pos-grand-total">Rs. 0</span>

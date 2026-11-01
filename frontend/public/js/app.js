@@ -166,7 +166,7 @@ function renderPosSalesHistory() {
     : sales.map((p) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
-      <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}</td>
+      <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}${p.delivery ? `<span class="mt-1 inline-block rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">Delivery · Rs. ${Number(p.deliveryFeeRs || 0).toLocaleString()}</span>` : ''}</td>
       <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
       <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
@@ -622,6 +622,8 @@ async function closeShopAndLogout() {
   ['pos-product-search', 'pos-weight-input', 'pos-quantity-input', 'pos-cust-phone',
     'pos-cust-name', 'pos-cash-received'].forEach((id) => { if ($(id)) $(id).value = ''; });
   $('pos-discount').value = '0';
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
   $('pos-customer-status').innerText = '';
   $('pos-pay-method').value = 'CASH';
   pendingPosSale = null;
@@ -1925,7 +1927,25 @@ function addItemToPosCart() {
   showToast(`Added ${quantity} ${inventoryUnitLabel(item)}${quantity === 1 ? '' : 's'} of ${item.name} to bill`, 'info');
 }
 function removePosCartItem(idx) { posCart.splice(idx, 1); renderPosCart(); }
-function clearPosCart() { posCart = []; $('pos-discount').value = 0; renderPosCart(); }
+function clearPosCart() {
+  posCart = [];
+  $('pos-discount').value = 0;
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
+  onPosFulfilmentChanged();
+}
+
+function isPosDelivery() {
+  return document.querySelector('input[name="pos-fulfilment"]:checked')?.value === 'delivery';
+}
+
+function onPosFulfilmentChanged() {
+  const isDelivery = isPosDelivery();
+  $('pos-delivery-fee-wrap').classList.toggle('hidden', !isDelivery);
+  $('pos-delivery-fee-summary').classList.toggle('hidden', !isDelivery);
+  $('pos-delivery-fee-summary').classList.toggle('flex', isDelivery);
+  renderPosCart();
+}
 
 function renderPosCart() {
   const listEl = $('pos-cart-list');
@@ -1942,9 +1962,12 @@ function renderPosCart() {
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
   const totalKg = posCart.filter((c) => c.unitType === 'kg').reduce((s, c) => s + c.quantity, 0);
   const discount = Number($('pos-discount').value) || 0;
+  const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
+  const grandTotal = Math.max(0, subtotal - discount) + deliveryFee;
   $('pos-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
+  $('pos-delivery-fee-total').innerText = `Rs. ${deliveryFee.toLocaleString()}`;
   $('pos-total-weight').innerText = `${totalKg.toFixed(2)} kg total dressed weight`;
-  $('pos-grand-total').innerText = `Rs. ${Math.max(0, subtotal - discount).toLocaleString()}`;
+  $('pos-grand-total').innerText = `Rs. ${grandTotal.toLocaleString()}`;
   updatePosCashSummary();
   updatePosLoyaltySummary();
 }
@@ -1960,7 +1983,8 @@ function updatePosCashSummary() {
   if (!$('pos-pay-method') || $('pos-pay-method').value !== 'CASH') return;
   const subtotal = posCart.reduce((sum, item) => sum + item.lineTotal, 0);
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
-  const total = Math.max(0, subtotal - discount);
+  const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
+  const total = Math.max(0, subtotal - discount) + deliveryFee;
   const enteredAmount = $('pos-cash-received').value.trim();
   const cashReceived = enteredAmount === '' ? total : Number(enteredAmount);
   const changeAmount = $('pos-change-amount');
@@ -2115,7 +2139,13 @@ function completePosSale() {
   const payment = $('pos-pay-method').value;
   const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
-  const grandTotal = Math.max(0, subtotal - discount);
+  const delivery = isPosDelivery();
+  const deliveryFeeInput = $('pos-delivery-fee').value.trim();
+  const deliveryFeeRs = delivery ? Number(deliveryFeeInput) : 0;
+  if (delivery && (deliveryFeeInput === '' || !Number.isInteger(deliveryFeeRs) || deliveryFeeRs < 0)) {
+    return showToast('Enter a valid whole-number delivery fee in rupees.', 'error');
+  }
+  const grandTotal = Math.max(0, subtotal - discount) + deliveryFeeRs;
   const cashReceivedInput = $('pos-cash-received').value.trim();
   const cashReceivedRs = payment !== 'CASH'
     ? 0
@@ -2167,7 +2197,7 @@ function completePosSale() {
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
     totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
-    payment, subtotal, discount, totalRs: grandTotal, cashReceivedRs, changeRs,
+    payment, subtotal, discount, delivery, deliveryFeeRs, totalRs: grandTotal, cashReceivedRs, changeRs,
     loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
     loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: customerPhoneKey ? pointsBalanceAfter : 0,
@@ -2194,6 +2224,8 @@ function renderPosSaleReceipt(sale) {
     <div class="grid grid-cols-12 ${item.isLoyaltyFreeGiveaway ? 'font-bold text-emerald-700' : ''}"><span class="col-span-6 truncate">${esc(item.name)}${item.isPieces ? ' — Pieces' : ''}</span><span class="col-span-2 text-right">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel)}</span><span class="col-span-4 text-right">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs.${Number(item.lineTotal).toLocaleString()}`}</span></div>`).join('');
   $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
   $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
+  $('rc-delivery-fee-row').classList.toggle('hidden', !sale.delivery);
+  $('rc-delivery-fee').innerText = `Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}`;
   $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
   const cashPayment = sale.payment === 'CASH';
   $('rc-cash-paid-row').classList.toggle('hidden', !cashPayment);
@@ -2260,6 +2292,7 @@ function confirmPosSale() {
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
     totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs,
+    delivery: sale.delivery, deliveryFeeRs: sale.deliveryFeeRs,
     cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
     loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
@@ -2267,7 +2300,8 @@ function confirmPosSale() {
   if (sale.payment === 'CREDIT') {
     state.receivablesList.unshift({
       id: sale.id, date: sale.date, customer: sale.customer, phone: sale.customerPhone,
-      details: sale.itemsSummary, amount: sale.totalRs, status: 'Pending'
+      details: `${sale.itemsSummary}${sale.delivery ? ` • Delivery fee Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}` : ''}`,
+      amount: sale.totalRs, status: 'Pending'
     });
   }
 
@@ -2276,6 +2310,9 @@ function confirmPosSale() {
   $('pos-cust-phone').value = '';
   $('pos-cust-name').value = '';
   $('pos-cash-received').value = '';
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
+  onPosFulfilmentChanged();
   $('pos-cust-name').readOnly = false;
   $('pos-customer-status').innerText = '';
   updatePosLoyaltySummary();

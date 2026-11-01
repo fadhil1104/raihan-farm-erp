@@ -48,6 +48,7 @@ const FarmIntake = model('FarmIntake', new Schema({
 const PosSale = model('PosSale', new Schema({
   ...base, id: String, date: String, time: String, customer: String, customerPhone: String, itemsSummary: String,
   itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number,
+  delivery: { type: Boolean, default: false }, deliveryFeeRs: { type: Number, default: 0 },
   cashReceivedRs: Number, changeRs: Number,
   loyaltyPointsEarned: Number, loyaltyPointsRedeemed: Number, loyaltyPointsBalanceAfter: Number, loyaltyFreeGiveawayKg: Number
 }, opts));
