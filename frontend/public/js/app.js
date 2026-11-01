@@ -2454,85 +2454,24 @@ function editPosBill() {
   $('receipt-modal').classList.add('hidden');
 }
 
-const POS_RECEIPT_COLUMNS = 32;
-
-function posReceiptText(value) {
-  return String(value ?? '').normalize('NFKD').replace(/[^\x20-\x7E]/g, '?');
-}
-
-function wrapPosReceiptText(value, width = POS_RECEIPT_COLUMNS) {
-  const words = posReceiptText(value).split(/\s+/).filter(Boolean);
-  const lines = [];
-  let line = '';
-  words.forEach((word) => {
-    while (word.length > width) {
-      if (line) lines.push(line);
-      lines.push(word.slice(0, width));
-      word = word.slice(width);
-      line = '';
-    }
-    if (line && `${line} ${word}`.length > width) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = line ? `${line} ${word}` : word;
-    }
-  });
-  if (line) lines.push(line);
-  return lines;
-}
-
-function posReceiptEscPos(sale) {
-  const lines = [];
-  const divider = '-'.repeat(POS_RECEIPT_COLUMNS);
-  const add = (value = '') => lines.push(...wrapPosReceiptText(value));
-  const addPair = (label, value) => {
-    const left = posReceiptText(label);
-    const right = posReceiptText(value);
-    if (left.length + right.length + 1 <= POS_RECEIPT_COLUMNS) {
-      add(`${left}${' '.repeat(POS_RECEIPT_COLUMNS - left.length - right.length)}${right}`);
-    } else {
-      add(left);
-      add(right.padStart(POS_RECEIPT_COLUMNS));
-    }
-  };
-  const subtotal = Number(sale.subtotal ?? (sale.itemsDetails || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0));
-
-  lines.push('\x1B\x40', '\x1B\x61\x01', '\x1B\x45\x01');
-  add('RAIHAN FARM SHOP');
-  lines.push('\x1B\x45\x00');
-  add('Fresh Farm-to-Shop Poultry & Meat');
-  add('Mannar Road, Puttalam - Tel: 0786959777');
-  lines.push('\x1B\x61\x00');
-  add(divider);
-  add(`Receipt: ${sale.id}`);
-  add(`Customer: ${sale.customer}`);
-  if (sale.customerPhone) add(`Phone: ${sale.customerPhone}`);
-  add(`Date: ${sale.date} ${sale.time}`);
-  add(`Payment: ${sale.payment}`);
-  add(divider);
-  (sale.itemsDetails || []).forEach((item) => {
-    add(`${item.name}${item.isPieces ? ' - Pieces' : ''}`);
-    const quantity = `${Number(item.quantity).toLocaleString()} ${item.unitLabel || item.unitType || ''}`;
-    addPair(quantity, item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`);
-  });
-  add(divider);
-  addPair('Subtotal:', `Rs. ${subtotal.toLocaleString()}`);
-  addPair('Discount:', `- Rs. ${Number(sale.discount || 0).toLocaleString()}`);
-  if (sale.delivery) addPair('Delivery fee:', `Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}`);
-  lines.push('\x1B\x45\x01');
-  addPair('BILL TOTAL:', `Rs. ${Number(sale.totalRs || 0).toLocaleString()}`);
-  lines.push('\x1B\x45\x00');
-  if (sale.payment === 'CASH') {
-    addPair('Customer paid:', `Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}`);
-    addPair('Balance returned:', `Rs. ${Number(sale.changeRs || 0).toLocaleString()}`);
-  }
-  add(divider);
-  lines.push('\x1B\x61\x01');
-  add('100% Halal - Fresh from Raihan Own Farm');
-  add('Thank you for shopping with us!');
-  lines.push('\x1B\x61\x00', '', '', '');
-  return lines.join('\n');
+function printPosReceiptInBrowser(sale) {
+  const printArea = $('receipt-print-area');
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area']
+    .forEach((id) => $(id).classList.remove('printable-active'));
+  printArea.classList.add('printable-active');
+  activeReceiptPrintSaleId = Number(sale.loyaltyPointsRedeemed || 0) > 0 && !sale.loyaltyRedemptionPrinted
+    ? sale.id
+    : null;
+  receiptPrintOriginalStyle = printArea.getAttribute('style');
+  printArea.style.cssText = 'position:absolute;left:0;top:0;box-sizing:border-box;width:80mm;max-width:none;padding:3mm;overflow:visible;font:10px/1.35 monospace;';
+  const heightMm = Math.ceil(printArea.getBoundingClientRect().height * 25.4 / 96 + 5);
+  if (receiptPrintOriginalStyle === null) printArea.removeAttribute('style');
+  else printArea.setAttribute('style', receiptPrintOriginalStyle);
+  receiptPrintStyle = document.createElement('style');
+  receiptPrintStyle.media = 'print';
+  receiptPrintStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+  document.head.appendChild(receiptPrintStyle);
+  window.print();
 }
 
 async function printPosReceiptAndOpenDrawer(sale) {
@@ -2555,21 +2494,17 @@ async function printPosReceiptAndOpenDrawer(sale) {
   }
   if (!printer) throw new Error('QZ Tray is connected, but this computer has no default printer selected.');
   const config = qzTray.configs.create(printer, { jobName: `POS receipt ${sale.id}` });
+  printPosReceiptInBrowser(sale);
   try {
     await qzTray.print(config, [{
       type: 'raw',
       format: 'command',
       flavor: 'plain',
-      data: [
-        posReceiptEscPos(sale),
-        '\x1B\x64\x03',
-        '\x1D\x56\x00',
-        '\x1B\x70\x00\x19\xFA'
-      ].join('')
+      data: '\x1B\x70\x00\x19\xFA'
     }]);
   } catch (error) {
-    console.error(`POS ESC/POS job failed for sale ${sale.id}:`, error);
-    throw new Error(`QZ Tray could not send the receipt and drawer command to "${printer}". Check the XPrinter queue/RAW driver and its connection. ${error.message || error}`);
+    console.error(`POS cash drawer command failed for sale ${sale.id}:`, error);
+    throw new Error(`The bill was printed, but QZ Tray could not open the cash drawer on "${printer}". Check the XPrinter queue/RAW driver and its connection. ${error.message || error}`);
   }
   return { printer, receiptPrinted: true, drawerOpened: true };
 }
@@ -2582,7 +2517,6 @@ async function printSavedPosReceipt() {
   button.disabled = true;
   try {
     const result = await printPosReceiptAndOpenDrawer(sale);
-    if (sale.loyaltyPointsRedeemed > 0) finalizeLoyaltyRedemptionAfterPrint(sale.id);
     showToast(`Receipt sent to "${result.printer}" and cash drawer opened.`, 'success');
   } catch (error) {
     console.error(`POS receipt/drawer error for sale ${sale.id}:`, error);
@@ -2673,9 +2607,6 @@ async function confirmPosSale() {
   saveState();
   try {
     const printResult = await printPosReceiptAndOpenDrawer(sale);
-    if (printResult.receiptPrinted && sale.loyaltyPointsRedeemed > 0) {
-      finalizeLoyaltyRedemptionAfterPrint(sale.id);
-    }
     if (!printResult.receiptPrinted || !printResult.drawerOpened) {
       const receiptStatus = printResult.receiptPrinted ? 'receipt sent' : `receipt failed (${printResult.receiptError?.message || 'unknown printer error'})`;
       const drawerStatus = printResult.drawerOpened ? 'drawer opened' : `drawer failed (${printResult.drawerError?.message || 'unknown printer error'})`;
