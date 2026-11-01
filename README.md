@@ -116,6 +116,7 @@ The backend and MongoDB API remain independently runnable and deployable.
 | PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
 | GET | `/api/state/pos-sales` | token | latest POS sales for background refresh |
+| PATCH | `/api/state/pos-sales/:id/payment` | admin | update a completed POS sale's payment method |
 | PUT | `/api/state` | token | sync state changes |
 | PUT | `/api/state?replace=true` | admin | restore a backup |
 | GET | `/api/attendance/roster` | public | names and attendance status for QR |

@@ -336,6 +336,75 @@ router.delete('/cashier-entries', requireAuth, requireAdmin, async (req, res) =>
   res.json({ ok: true, deletedCount: result.deletedCount });
 });
 
+router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, res) => {
+  const payment = String(req.body?.payment || '');
+  const validPayments = ['CASH', 'CARD', 'QR / TRANSFER', 'CREDIT'];
+  if (!validPayments.includes(payment)) {
+    return res.status(400).json({ error: 'Select a valid POS payment method.' });
+  }
+
+  const sale = await PosSale.findOne({ id: req.params.id });
+  if (!sale) return res.status(404).json({ error: 'POS sale not found' });
+
+  const linkedReceivable = await Receivable.findOne({ id: sale.id });
+  if (sale.payment === 'CREDIT' && payment !== 'CREDIT' && linkedReceivable?.status === 'Collected') {
+    return res.status(409).json({ error: 'This credit sale has already been marked as collected and its payment method cannot be changed.' });
+  }
+
+  const updatedSale = await PosSale.findOneAndUpdate(
+    { _id: sale._id, payment: sale.payment },
+    {
+      $set: {
+        payment,
+        cashReceivedRs: payment === 'CASH'
+          ? sale.payment === 'CASH' ? Number(sale.cashReceivedRs ?? sale.totalRs ?? 0) : Number(sale.totalRs || 0)
+          : 0,
+        changeRs: payment === 'CASH' && sale.payment === 'CASH' ? Number(sale.changeRs || 0) : 0
+      }
+    },
+    { new: true, runValidators: true }
+  );
+  if (!updatedSale) return res.status(409).json({ error: 'POS sale changed while you were editing it. Refresh and try again.' });
+
+  let receivable = null;
+  if (payment === 'CREDIT') {
+    receivable = await Receivable.findOneAndUpdate(
+      { id: sale.id },
+      {
+        $setOnInsert: {
+          uid: String(sale.id),
+          id: String(sale.id),
+          date: sale.date,
+          customer: sale.customer,
+          phone: sale.customerPhone,
+          details: `${sale.itemsSummary}${sale.delivery ? ` • Delivery fee Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}` : ''}`,
+          amount: Number(sale.totalRs || 0),
+          status: 'Pending'
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    await Receivable.deleteOne({ id: sale.id });
+  }
+
+  const vault = await DailyVault.findOne({ uid: sale.date });
+  if (vault) {
+    const vaultSale = (vault.posSales || []).find((entry) => String(entry.id) === String(sale.id));
+    if (vaultSale) {
+      vaultSale.payment = updatedSale.payment;
+      vaultSale.cashReceivedRs = updatedSale.cashReceivedRs;
+      vaultSale.changeRs = updatedSale.changeRs;
+      await vault.save();
+    }
+  }
+
+  res.json({
+    sale: clean(updatedSale.toObject()),
+    receivable: receivable ? clean(receivable.toObject()) : null
+  });
+});
+
 router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   const sale = await PosSale.findOne({ id: req.params.id });
   if (!sale) return res.status(404).json({ error: 'POS sale not found' });

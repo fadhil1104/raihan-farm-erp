@@ -57,6 +57,7 @@ let activeReceiptPrintSaleId = null;
 let receiptPrintStyle = null;
 let receiptPrintOriginalStyle = null;
 let editingStaffId = null;
+let editingPosPaymentSaleId = null;
 let inventoryStockAdditions = null;
 let inventoryStockAdditionsDate = '';
 let inventoryStockAdditionsRequestId = 0;
@@ -153,7 +154,7 @@ function renderPosSalesHistory() {
   $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
   $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
 
-  const canDeleteSales = currentUser?.role === 'admin';
+  const canManageSales = currentUser?.role === 'admin';
   const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
     : posIncomePeriod === 'DATE' ? `Sales for ${posIncomeDate}`
     : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
@@ -162,18 +163,86 @@ function renderPosSalesHistory() {
   $('pos-income-period-label').innerText = `${periodLabel} — Total Collected`;
   $('pos-history-heading').innerText = `${periodLabel} — Completed POS Transactions`;
   $('pos-history-tbody').innerHTML = sales.length === 0
-    ? `<tr><td colspan="${canDeleteSales ? 7 : 6}" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
+    ? `<tr><td colspan="${canManageSales ? 7 : 6}" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
     : sales.map((p) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
       <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}${p.delivery ? `<span class="mt-1 inline-block rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">Delivery · Rs. ${Number(p.deliveryFeeRs || 0).toLocaleString()}</span>` : ''}</td>
       <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
-      <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
+      <td data-label="Payment">${canManageSales && editingPosPaymentSaleId === String(p.id)
+        ? `<select id="pos-payment-edit" aria-label="Payment method for sale ${esc(p.id)}" class="min-w-36 rounded-lg border border-slate-600 bg-slate-900 px-2 py-1.5 text-xs font-bold">${[
+          ['CASH', 'Cash Payment'],
+          ['CARD', 'Card / POS Machine'],
+          ['QR / TRANSFER', 'LankaQR / Bank Transfer'],
+          ['CREDIT', 'Hotel / Regular Credit']
+        ].map(([value, label]) => `<option value="${value}"${p.payment === value ? ' selected' : ''}>${label}</option>`).join('')}</select>`
+        : `<span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span>`}</td>
       <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
-      ${canDeleteSales ? `<td data-label="Actions" class="text-right"><button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button></td>` : ''}
+      ${canManageSales ? `<td data-label="Actions" class="text-right whitespace-nowrap">${editingPosPaymentSaleId === String(p.id)
+        ? `<button type="button" onclick="savePosPaymentEdit(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"><i class="fa-solid fa-check mr-1"></i>Save</button>
+           <button type="button" onclick="cancelPosPaymentEdit()" class="ml-1 rounded-lg bg-slate-700 px-2.5 py-1.5 text-xs font-bold text-white transition hover:bg-slate-600">Cancel</button>`
+        : `<button type="button" onclick="editPosPayment(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
+           <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button>`}</td>` : ''}
     </tr>`).join('');
   renderCashierDrawer();
+}
+
+function editPosPayment(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS payment methods.', 'error');
+  if (!(state?.posSales || []).some((sale) => String(sale.id) === String(saleId))) {
+    return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+  }
+  editingPosPaymentSaleId = String(saleId);
+  renderPosSalesHistory();
+}
+
+function cancelPosPaymentEdit() {
+  editingPosPaymentSaleId = null;
+  renderPosSalesHistory();
+}
+
+async function savePosPaymentEdit(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS payment methods.', 'error');
+  if (editingPosPaymentSaleId !== String(saleId)) return;
+  const payment = $('pos-payment-edit')?.value;
+  if (!payment) return showToast('Select a valid payment method.', 'error');
+
+  const saveButton = $('pos-history-tbody').querySelector('button[onclick^="savePosPaymentEdit"]');
+  if (saveButton) saveButton.disabled = true;
+  try {
+    await flushNow();
+    if (savePending || saveInFlight) {
+      throw new Error('Pending changes could not be saved. Wait for synchronization before editing this sale.');
+    }
+    const result = await Api.updatePosSalePaymentMethod(saleId, payment);
+    const saleIndex = state.posSales.findIndex((sale) => String(sale.id) === String(saleId));
+    if (saleIndex !== -1) state.posSales[saleIndex] = result.sale;
+    if (result.receivable) {
+      const receivableIndex = state.receivablesList.findIndex((entry) => String(entry.id) === String(saleId));
+      if (receivableIndex === -1) state.receivablesList.unshift(result.receivable);
+      else state.receivablesList[receivableIndex] = result.receivable;
+    } else {
+      state.receivablesList = state.receivablesList.filter((entry) => String(entry.id) !== String(saleId));
+    }
+    const daySales = state.dailyVault?.[result.sale.date]?.posSales;
+    if (Array.isArray(daySales)) {
+      const vaultSale = daySales.find((sale) => String(sale.id) === String(saleId));
+      if (vaultSale) Object.assign(vaultSale, {
+        payment: result.sale.payment,
+        cashReceivedRs: result.sale.cashReceivedRs,
+        changeRs: result.sale.changeRs
+      });
+    }
+    editingPosPaymentSaleId = null;
+    renderAll();
+    setSyncStatus('Synced from MongoDB');
+    showToast(`Payment method for sale ${saleId} updated to ${payment}.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (saveButton) saveButton.disabled = false;
+  }
 }
 
 async function deletePosSale(saleId) {
@@ -371,6 +440,8 @@ function ensureStateCollections() {
   if (!Array.isArray(state.staff)) state.staff = Array.isArray(state.employees) ? state.employees : [];
   delete state.employees;
   if (!Array.isArray(state.customers)) state.customers = [];
+  if (!Array.isArray(state.posSales)) state.posSales = [];
+  if (!Array.isArray(state.receivablesList)) state.receivablesList = [];
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
   if (!Array.isArray(state.farmIntakes)) state.farmIntakes = [];
   if (Array.isArray(state.attendanceLogs)) {

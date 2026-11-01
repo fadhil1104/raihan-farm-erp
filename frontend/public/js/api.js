@@ -44,6 +44,7 @@ const Api = (() => {
     putState: (state, replace = false) => request('/state' + (replace ? '?replace=true' : ''), { method: 'PUT', body: state }),
     addCashierEntry: (entry) => request('/state/cashier-entries', { method: 'POST', body: { ...entry, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } }),
     resetCashierDrawer: () => request('/state/cashier-entries', { method: 'DELETE' }),
+    updatePosSalePaymentMethod: (saleId, payment) => request('/state/pos-sales/' + encodeURIComponent(saleId) + '/payment', { method: 'PATCH', body: { payment } }),
     deletePosSale: (saleId) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'DELETE' }),
     addInventoryStock: (itemId, quantity) => request('/state/inventory/' + encodeURIComponent(itemId) + '/stock', { method: 'POST', body: { quantity } }),
     recordInventoryAdjustment: (adjustment) => request('/state/inventory/adjustments', { method: 'POST', body: adjustment }),
