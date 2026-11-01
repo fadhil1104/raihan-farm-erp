@@ -1087,6 +1087,42 @@
         </div>
       </div>
       <div id="pos-summary-print-area" class="pos-summary-print-area"></div>
+      <div id="pos-sale-edit-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4">
+        <form id="pos-sale-edit-form" onsubmit="event.preventDefault(); savePosSaleEdit()" class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-yellow-500/40 bg-slate-900 p-5 shadow-2xl space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <div><h3 class="text-lg font-black text-white">Edit POS Sale</h3><p class="mt-1 text-xs text-slate-400">Changes update stock, credit records, customer visit/spend totals, and the daily archive. Loyalty point balances are unchanged.</p></div>
+            <button type="button" onclick="closePosSaleEdit()" class="text-slate-400 hover:text-white" aria-label="Close sale editor"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label class="text-xs font-semibold text-slate-400">Receipt ID<input id="pos-edit-id" readonly class="mt-1 w-full rounded-lg bg-slate-800 px-3 py-2 text-sm text-slate-400"></label>
+            <label class="text-xs font-semibold text-slate-400">Date<input id="pos-edit-date" type="date" required class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Time<input id="pos-edit-time" type="text" required placeholder="HH:MM" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Payment method<select id="pos-edit-payment" required onchange="updatePosSaleEditPayment()" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"><option value="CASH">Cash</option><option value="CARD">Card / POS Machine</option><option value="QR / TRANSFER">LankaQR / Bank Transfer</option><option value="CREDIT">Hotel / Regular Credit</option></select></label>
+            <label class="text-xs font-semibold text-slate-400">Customer<input id="pos-edit-customer" type="text" required maxlength="160" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Customer phone<input id="pos-edit-phone" type="text" maxlength="40" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Subtotal (Rs.)<input id="pos-edit-subtotal" type="number" min="0" step="0.01" required class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Discount (Rs.)<input id="pos-edit-discount" type="number" min="0" step="0.01" required class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Sale total (Rs.)<input id="pos-edit-total" type="number" min="0" step="0.01" required class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Cash received (Rs.)<input id="pos-edit-cash-received" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="text-xs font-semibold text-slate-400">Change (Rs.)<input id="pos-edit-change" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label class="flex items-center gap-2 self-end rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300"><input id="pos-edit-delivery" type="checkbox" class="accent-yellow-400"> Delivery sale</label>
+            <label class="text-xs font-semibold text-slate-400">Delivery fee (Rs.)<input id="pos-edit-delivery-fee" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+          </div>
+          <div class="space-y-2">
+            <div class="flex items-center justify-between gap-2"><h4 class="text-sm font-bold text-white">Items sold</h4><button type="button" onclick="addPosSaleEditItem()" class="rounded-lg bg-slate-700 px-3 py-2 text-xs font-bold text-white hover:bg-slate-600"><i class="fa-solid fa-plus mr-1"></i>Add item</button></div>
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[700px] text-left text-xs">
+                <thead><tr class="border-b border-slate-700 text-slate-400"><th class="p-2">Product</th><th class="p-2">Quantity</th><th class="p-2">Unit price</th><th class="p-2">Line total</th><th class="p-2">Free</th><th class="p-2"></th></tr></thead>
+                <tbody id="pos-edit-items" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-wrap justify-end gap-2 border-t border-slate-800 pt-4">
+            <button type="button" onclick="closePosSaleEdit()" class="rounded-lg bg-slate-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-600">Cancel</button>
+            <button id="pos-edit-save-button" type="submit" class="rounded-lg bg-yellow-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-yellow-300"><i class="fa-solid fa-check mr-1"></i>Save Sale Changes</button>
+          </div>
+        </form>
+      </div>
       <div id="pos-print-options-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/80 p-4">
         <div class="w-full max-w-md space-y-4 rounded-2xl border border-yellow-500/40 bg-slate-900 p-6 shadow-2xl">
           <div class="flex items-start justify-between gap-3">

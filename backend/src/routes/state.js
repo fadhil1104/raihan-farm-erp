@@ -84,6 +84,175 @@ function getSaleInventoryQuantities(sale) {
   return quantities;
 }
 
+function validSaleDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function getEditedSaleInventoryQuantities(itemsDetails) {
+  const quantities = new Map();
+  for (const detail of itemsDetails) {
+    const id = String(detail?.id || '');
+    const unitType = String(detail?.unitType || '');
+    const quantity = Number(detail?.quantity);
+    if (!id || !['kg', 'packet', 'unit'].includes(unitType) || !Number.isFinite(quantity) || quantity <= 0 ||
+        (unitType !== 'kg' && !Number.isInteger(quantity))) {
+      return null;
+    }
+    const field = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
+    const current = quantities.get(id);
+    if (current && current.field !== field) return null;
+    quantities.set(id, { field, quantity: (current?.quantity || 0) + quantity });
+  }
+  return quantities;
+}
+
+async function applySaleInventoryDelta(oldQuantities, newQuantities) {
+  const ids = new Set([...oldQuantities.keys(), ...newQuantities.keys()]);
+  const inventory = new Map((await InventoryItem.find({ id: { $in: [...ids] } })).map((item) => [String(item.id), item]));
+  const changes = [];
+
+  for (const id of ids) {
+    const oldQuantity = oldQuantities.get(id);
+    const newQuantity = newQuantities.get(id);
+    const oldField = oldQuantity?.field;
+    const newField = newQuantity?.field;
+    const item = inventory.get(id);
+    if (!item && newQuantity && oldQuantity &&
+        newQuantity.field === oldQuantity.field && Math.abs(newQuantity.quantity - oldQuantity.quantity) < 0.000001) continue;
+    if (newQuantity && (!item || ((item.unitType || 'kg') === 'kg' ? 'stockKg' : 'stockQuantity') !== newField)) {
+      throw Object.assign(new Error(`Inventory item ${id} no longer matches the sale item.`), { status: 409 });
+    }
+    if (!item) {
+      if (newQuantity) throw Object.assign(new Error(`Inventory item ${id} no longer exists.`), { status: 409 });
+      continue;
+    }
+
+    for (const field of new Set([oldField, newField].filter(Boolean))) {
+      const before = oldField === field ? oldQuantity.quantity : 0;
+      const after = newField === field ? newQuantity.quantity : 0;
+      const delta = after - before;
+      if (Math.abs(delta) < 0.000001) continue;
+      if (field === 'stockQuantity' && !Number.isInteger(delta)) {
+        throw Object.assign(new Error(`Item ${item.name} must use a whole-number quantity.`), { status: 400 });
+      }
+      if (delta > 0 && Number(item[field] || 0) < delta) {
+        throw Object.assign(new Error(`${item.name} does not have enough stock for the edited sale.`), { status: 409 });
+      }
+      changes.push({ id, field, delta, name: item.name });
+    }
+  }
+
+  const applied = [];
+  try {
+    for (const change of changes) {
+      const filter = { id: change.id };
+      if (change.delta > 0) filter[change.field] = { $gte: change.delta };
+      const result = await InventoryItem.updateOne(filter, { $inc: { [change.field]: -change.delta } });
+      if (!result.matchedCount) {
+        throw Object.assign(new Error(`${change.name} stock changed while you were editing. Refresh and try again.`), { status: 409 });
+      }
+      applied.push(change);
+    }
+  } catch (error) {
+    for (const change of applied.reverse()) {
+      await InventoryItem.updateOne({ id: change.id }, { $inc: { [change.field]: change.delta } });
+    }
+    throw error;
+  }
+  return changes;
+}
+
+function adjustVaultInventorySnapshot(snapshot, quantities, restore) {
+  (snapshot || []).forEach((row) => {
+    const sold = quantities.get(String(row.id));
+    if (!sold) return;
+    const soldField = sold.field === 'stockKg' ? 'soldKg' : 'soldStock';
+    const closingField = sold.field === 'stockKg' ? 'closingKg' : 'closingStock';
+    const oldSold = Number(row.soldStock ?? row[soldField] ?? 0);
+    const oldClosing = Number(row.closingStock ?? row[closingField] ?? 0);
+    const oldSpecificSold = Number(row[soldField] ?? oldSold);
+    const oldSpecificClosing = Number(row[closingField] ?? oldClosing);
+    const adjustment = restore ? sold.quantity : -sold.quantity;
+    row.soldStock = Math.max(0, oldSold + adjustment);
+    row.closingStock = Math.max(0, oldClosing - adjustment);
+    if (sold.field === 'stockKg') {
+      row.soldKg = Math.max(0, oldSpecificSold + adjustment);
+      row.closingKg = Math.max(0, oldSpecificClosing - adjustment);
+    }
+  });
+}
+
+async function updateSaleVaults(previous, updated, oldQuantities, newQuantities) {
+  const dates = new Set([previous.date, updated.date]);
+  for (const date of dates) {
+    if (!validSaleDate(date)) continue;
+    let vault = await DailyVault.findOne({ uid: date });
+    if (!vault && date === updated.date) {
+      vault = new DailyVault({ uid: date, date, posSales: [], inventorySnapshot: [] });
+    }
+    if (!vault) continue;
+    const sales = vault.posSales || [];
+    vault.posSales = sales.filter((entry) => String(entry.id) !== String(previous.id));
+    if (date === updated.date) vault.posSales.push(updated.toObject ? clean(updated.toObject()) : updated);
+    if (date === previous.date) adjustVaultInventorySnapshot(vault.inventorySnapshot, oldQuantities, true);
+    if (date === updated.date) adjustVaultInventorySnapshot(vault.inventorySnapshot, newQuantities, false);
+    await vault.save();
+  }
+}
+
+async function refreshSaleCustomerTotals(phoneNumbers) {
+  const keys = new Set(phoneNumbers.map(phoneKey).filter(Boolean));
+  if (!keys.size) return;
+  const sales = await PosSale.find().select('customer customerPhone totalRs date time').lean();
+  const customers = await Customer.find().lean();
+  const updatedKeys = new Set();
+  for (const customer of customers) {
+    const key = phoneKey(customer.phone);
+    if (!keys.has(key)) continue;
+    updatedKeys.add(key);
+    const customerSales = sales.filter((sale) => phoneKey(sale.customerPhone) === key);
+    customerSales.sort((a, b) => `${b.date || ''} ${b.time || ''}`.localeCompare(`${a.date || ''} ${a.time || ''}`));
+    await Customer.updateOne({ _id: customer._id }, {
+      $set: {
+        visitCount: customerSales.length,
+        totalSpent: customerSales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0),
+        lastVisit: customerSales[0]?.date || '',
+        ...(customerSales[0] ? { name: customerSales[0].customer, phone: customerSales[0].customerPhone } : {})
+      }
+    });
+  }
+  for (const key of keys) {
+    if (updatedKeys.has(key)) continue;
+    const customerSales = sales.filter((sale) => phoneKey(sale.customerPhone) === key);
+    if (!customerSales.length) continue;
+    customerSales.sort((a, b) => `${b.date || ''} ${b.time || ''}`.localeCompare(`${a.date || ''} ${a.time || ''}`));
+    await Customer.updateOne(
+      { uid: key },
+      {
+        $setOnInsert: {
+          uid: key,
+          id: key,
+          seq: Date.now(),
+          name: customerSales[0].customer || 'Customer',
+          phone: customerSales[0].customerPhone,
+          loyaltyPoints: 0,
+          loyaltyKgRemainder: 0
+        },
+        $set: {
+          visitCount: customerSales.length,
+          totalSpent: customerSales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0),
+          lastVisit: customerSales[0].date || '',
+          name: customerSales[0].customer || 'Customer',
+          phone: customerSales[0].customerPhone
+        }
+      },
+      { upsert: true }
+    );
+  }
+}
+
 function phoneKey(value) {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
@@ -334,6 +503,143 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
 router.delete('/cashier-entries', requireAuth, requireAdmin, async (req, res) => {
   const result = await CashierEntry.deleteMany({});
   res.json({ ok: true, deletedCount: result.deletedCount });
+});
+
+router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
+  const sale = await PosSale.findOne({ id: req.params.id });
+  if (!sale) return res.status(404).json({ error: 'POS sale not found' });
+
+  const body = req.body || {};
+  const validPayments = ['CASH', 'CARD', 'QR / TRANSFER', 'CREDIT'];
+  const time = String(body.time || '').trim();
+  const timeMatch = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!validSaleDate(String(body.date || '')) || !timeMatch || Number(timeMatch[1]) > (timeMatch[4] ? 12 : 23) ||
+      Number(timeMatch[1]) < (timeMatch[4] ? 1 : 0) || Number(timeMatch[2]) > 59 ||
+      Number(timeMatch[3] || 0) > 59) {
+    return res.status(400).json({ error: 'Enter a valid sale date and time.' });
+  }
+  const customer = String(body.customer || '').trim();
+  const customerPhone = String(body.customerPhone || '').trim();
+  const payment = String(body.payment || '');
+  if (!customer || customer.length > 160 || customerPhone.length > 40 || !validPayments.includes(payment)) {
+    return res.status(400).json({ error: 'Enter a valid customer, phone number, and payment method.' });
+  }
+  const numericFields = ['subtotal', 'discount', 'totalRs', 'cashReceivedRs', 'changeRs', 'deliveryFeeRs'];
+  if (numericFields.some((field) => typeof body[field] !== 'number' || !Number.isFinite(body[field]) || body[field] < 0)) {
+    return res.status(400).json({ error: 'Sale amounts must be valid non-negative numbers.' });
+  }
+  if (typeof body.delivery !== 'boolean') {
+    return res.status(400).json({ error: 'Select whether this sale used delivery.' });
+  }
+  if (payment === 'CASH' && Math.abs(body.cashReceivedRs - body.totalRs - body.changeRs) > 0.01) {
+    return res.status(400).json({ error: 'Cash received must equal the sale total plus the change returned.' });
+  }
+  if (payment !== 'CASH' && (body.cashReceivedRs !== 0 || body.changeRs !== 0)) {
+    return res.status(400).json({ error: 'Cash received and change must be zero for non-cash payments.' });
+  }
+  if (!Array.isArray(body.itemsDetails) || body.itemsDetails.length < 1 || body.itemsDetails.length > 100) {
+    return res.status(400).json({ error: 'A sale must contain between 1 and 100 items.' });
+  }
+
+  const itemsDetails = [];
+  for (const detail of body.itemsDetails) {
+    const quantity = Number(detail?.quantity);
+    const unitPrice = Number(detail?.unitPrice);
+    const lineTotal = Number(detail?.lineTotal);
+    const id = String(detail?.id || '');
+    const unitType = String(detail?.unitType || '');
+    const name = String(detail?.name || '').trim();
+    if (!id || !name || name.length > 160 || !['kg', 'packet', 'unit'].includes(unitType) ||
+        !Number.isFinite(quantity) || quantity <= 0 || (unitType !== 'kg' && !Number.isInteger(quantity)) ||
+        !Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(lineTotal) || lineTotal < 0) {
+      return res.status(400).json({ error: 'Check the product, quantity, unit price, and line total for every item.' });
+    }
+    itemsDetails.push({
+      id, name, unitType, quantity, unitLabel: String(detail.unitLabel || unitType),
+      unitPrice, lineTotal, weightKg: unitType === 'kg' ? quantity : 0,
+      ...(Number.isFinite(Number(detail.packWeightGrams)) && Number(detail.packWeightGrams) > 0
+        ? { packWeightGrams: Number(detail.packWeightGrams) } : {}),
+      ...(detail.isPieces === true ? { isPieces: true } : {}),
+      ...(detail.isLoyaltyFreeGiveaway === true ? { isLoyaltyFreeGiveaway: true } : {})
+    });
+  }
+  const newQuantities = getEditedSaleInventoryQuantities(itemsDetails);
+  if (!newQuantities) return res.status(400).json({ error: 'Sale item quantities or units are invalid.' });
+
+  const linkedReceivable = await Receivable.findOne({ id: sale.id });
+  if (linkedReceivable?.status === 'Collected') {
+    return res.status(409).json({ error: 'This sale is linked to a collected credit. Collected credit sales cannot be edited.' });
+  }
+
+  const oldQuantities = getSaleInventoryQuantities(sale);
+  const totalKg = +itemsDetails.filter((item) => item.unitType === 'kg')
+    .reduce((sum, item) => sum + item.quantity, 0).toFixed(2);
+  const itemsBreakdown = {};
+  itemsDetails.forEach((item) => {
+    if (item.unitType === 'kg') itemsBreakdown[item.id] = (itemsBreakdown[item.id] || 0) + item.quantity;
+  });
+  const itemsSummary = itemsDetails.map((item) =>
+    `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${item.quantity === 1 ? '' : 's'})`
+  ).join(', ');
+  const updates = {
+    date: String(body.date),
+    time,
+    customer,
+    customerPhone,
+    payment,
+    subtotal: body.subtotal,
+    discount: body.discount,
+    totalRs: body.totalRs,
+    cashReceivedRs: payment === 'CASH' ? body.cashReceivedRs : 0,
+    changeRs: payment === 'CASH' ? body.changeRs : 0,
+    delivery: body.delivery,
+    deliveryFeeRs: body.delivery ? body.deliveryFeeRs : 0,
+    itemsDetails,
+    itemsBreakdown,
+    itemsSummary,
+    totalKg
+  };
+  let inventoryChanges = [];
+  let updatedSale;
+  try {
+    inventoryChanges = await applySaleInventoryDelta(oldQuantities, newQuantities);
+    updatedSale = await PosSale.findOneAndUpdate(
+      { _id: sale._id, updatedAt: sale.updatedAt },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+    if (!updatedSale) {
+      throw Object.assign(new Error('POS sale changed while you were editing it. Refresh and try again.'), { status: 409 });
+    }
+  } catch (error) {
+    for (const change of inventoryChanges.reverse()) {
+      await InventoryItem.updateOne({ id: change.id }, { $inc: { [change.field]: change.delta } });
+    }
+    throw error;
+  }
+
+  if (payment === 'CREDIT') {
+    await Receivable.findOneAndUpdate(
+      { id: sale.id },
+      {
+        $set: {
+          date: updates.date,
+          customer,
+          phone: customerPhone,
+          details: `${itemsSummary}${updates.delivery ? ` • Delivery fee Rs. ${Number(updates.deliveryFeeRs).toLocaleString()}` : ''}`,
+          amount: updates.totalRs
+        },
+        $setOnInsert: { uid: String(sale.id), id: String(sale.id), status: 'Pending' }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    await Receivable.deleteOne({ id: sale.id });
+  }
+
+  await updateSaleVaults(sale, updatedSale, oldQuantities, newQuantities);
+  await refreshSaleCustomerTotals([sale.customerPhone, customerPhone]);
+  res.json({ sale: clean(updatedSale.toObject()) });
 });
 
 router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, res) => {
