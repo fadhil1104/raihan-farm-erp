@@ -2796,18 +2796,26 @@ window.addEventListener('afterprint', () => {
 });
 
 // ---------- MODULE 7: deliveries & subscriptions ----------
+function getDeliveryDateOption(option) {
+  return option === 'TODAY' ? getTodayDate() : getTomorrowDate();
+}
+
 function addDelivery() {
   const customer = $('del-customer').value.trim();
   const items = $('del-items').value.trim();
   if (!customer || !items) return showToast('Please enter customer and meat order details.', 'error');
+  const dateOption = $('del-date-option').value;
+  const isToday = dateOption === 'TODAY';
   const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer, phone: $('del-phone').value.trim(), area: $('del-area').value.trim(),
-    items, date: getTomorrowDate(), slot: $('del-slot').value, rider: (riders[0] || state.staff[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
+    items, date: getDeliveryDateOption(dateOption), slot: $('del-slot').value,
+    rider: (riders[0] || state.staff[0] || { name: '-' }).name,
+    status: isToday ? 'Scheduled for Today' : 'Scheduled for Tomorrow'
   });
   ['del-customer', 'del-phone', 'del-area', 'del-items'].forEach((id) => { $(id).value = ''; });
   saveState();
-  showToast(`Scheduled next-day delivery for ${customer}`, 'success');
+  showToast(`Scheduled ${isToday ? 'same-day' : 'next-day'} delivery for ${customer}`, 'success');
 }
 
 function updateDeliveryStatus(id, status) {
@@ -2844,16 +2852,20 @@ function addSubscription() {
   showToast(`Weekly subscription registered for ${customer}!`, 'success');
 }
 
-function pushSubToTomorrow(subId) {
+function pushSubToSelectedDate(subId) {
   const sub = state.subscriptions.find((s) => s.id === subId);
   if (!sub) return;
+  const dateOption = $('sub-push-date-option').value;
+  const isToday = dateOption === 'TODAY';
   const riders = state.staff.filter((member) => /rider/i.test(member.role));
   state.deliveries.unshift({
     id: Date.now(), customer: `${sub.customer} (Weekly Sub)`, phone: sub.phone, area: sub.area, items: sub.pack,
-    date: getTomorrowDate(), slot: 'Morning (07:00 AM - 10:00 AM)', rider: (riders[0] || state.staff[0] || { name: '-' }).name, status: 'Scheduled for Tomorrow'
+    date: getDeliveryDateOption(dateOption), slot: 'Morning (07:00 AM - 10:00 AM)',
+    rider: (riders[0] || state.staff[0] || { name: '-' }).name,
+    status: isToday ? 'Scheduled for Today' : 'Scheduled for Tomorrow'
   });
   saveState();
-  showToast(`${sub.customer}'s weekly box added to tomorrow's dispatch!`, 'success');
+  showToast(`${sub.customer}'s weekly box added to ${isToday ? "today's" : "tomorrow's"} dispatch!`, 'success');
 }
 
 function ensureCoaState() {
@@ -3357,7 +3369,7 @@ function renderAll() {
 
   // Deliveries & subscriptions
   const riders = activeStaff.map((member) => member.name);
-  const statuses = ['Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
+  const statuses = ['Scheduled for Today', 'Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
   $('deliveries-tbody').innerHTML = state.deliveries.map((d) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(d.date)}</div><div class="text-xs text-slate-400">${esc(d.slot)}</div></td>
@@ -3376,7 +3388,7 @@ function renderAll() {
       <td class="py-3 px-3 font-semibold text-yellow-400">${esc(s.pack)}</td>
       <td class="py-3 px-3">${esc(s.day)}</td>
       <td class="py-3 px-3 font-bold text-white">Rs. ${Number(s.price).toLocaleString()}</td>
-      <td class="py-3 px-3 text-right"><button onclick="pushSubToTomorrow(${s.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-paper-plane mr-1"></i> Push to Tomorrow</button></td>
+      <td class="py-3 px-3 text-right"><button onclick="pushSubToSelectedDate(${s.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-paper-plane mr-1"></i> Push to Selected Date</button></td>
     </tr>`).join('');
 }
 
