@@ -49,10 +49,13 @@ collection is dropped on backend startup. Non-admin user accounts without a staf
 record are also added to `staffs` with the default payroll settings.
 
 POS receipt printing and cash-drawer opening use QZ Tray on the POS computer.
-Set the receipt thermal printer as that computer's QZ Tray default printer and
-connect the drawer to the printer's drawer port. The printer must support the
-ESC/POS drawer-pulse command. QZ Tray may ask the operator to authorize the
-website before it can print or open the drawer.
+For USB-connected XPrinter devices, set the XPrinter as the POS computer's
+default printer in the operating system and install/configure its queue for RAW
+ESC/POS printing. Connect the cash drawer's RJ11/RJ12 cable to the printer's
+cash-drawer/DK port. The printer's RJ45 jack is normally Ethernet and is not
+needed for this USB setup. The printer must support ESC/POS and the standard
+drawer-pulse command. QZ Tray must be running on the POS computer and may ask
+the operator to authorize the website before it can print or open the drawer.
 
 ## Docker
 
