@@ -35,10 +35,14 @@ const Customer = model('Customer', new Schema({
 }, opts));
 
 const SlaughterBatch = model('SlaughterBatch', new Schema({
-  ...base, id: String, date: String, source: String, categoryId: String, categoryName: String,
+  ...base, id: String, intakeId: String, intakeDate: String, date: String, source: String, categoryId: String, categoryName: String,
   animalType: String, count: Number, liveKg: Number, deadBeforeSlaughterCount: Number,
   slaughterAnimalType: String, slaughterCount: Number, slaughterLiveKg: Number,
   expectedKg: Number, actualKg: Number, wasteKg: Number, wastePct: Number
+}, opts));
+
+const FarmIntake = model('FarmIntake', new Schema({
+  ...base, id: String, date: String, animalType: String, count: Number, liveKg: Number
 }, opts));
 
 const PosSale = model('PosSale', new Schema({
@@ -104,6 +108,7 @@ const collections = [
   { key: 'inventory',                 Model: InventoryItem,     keyField: 'id' },
   { key: 'pendingInventoryApprovals', Model: InventoryApproval, keyField: 'reqId' },
   { key: 'customers',                 Model: Customer,          keyField: 'id' },
+  { key: 'farmIntakes',               Model: FarmIntake,        keyField: 'id',    adminOnly: true, sortNewest: true },
   { key: 'slaughterBatches',          Model: SlaughterBatch,    keyField: 'id',    adminOnly: true, sortNewest: true },
   { key: 'posSales',                  Model: PosSale,           keyField: 'id',    insertOnly: true, sortNewest: true },
   { key: 'cashierEntries',            Model: CashierEntry,      keyField: 'id',    insertOnly: true, sortNewest: true },

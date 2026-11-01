@@ -655,52 +655,54 @@
     <section id="tab-slaughter" class="space-y-6 hidden">
       <div class="border-b border-slate-800 pb-4">
         <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Raihan Own Farm Supplier</span>
-        <h2 class="text-2xl font-black mt-1">Farm Live Intake & Slaughter Wastage Calculator</h2>
-        <p class="text-slate-400 text-sm">Record animal intake and pre-slaughter deaths, then record slaughter details separately before adding dressed inventory weights. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
+        <h2 class="text-2xl font-black mt-1">Farm Intake & Evening Slaughter</h2>
+        <p class="text-slate-400 text-sm">Save the animals received in the morning. In the evening, select that intake to record animals that died, animals slaughtered, and dressed inventory weights. Standard slaughter waste is <strong>30%</strong> (70% net meat yield).</p>
       </div>
       <div class="card-highlight p-5 sm:p-6 space-y-5">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-          <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i> Record Farm Intake & Slaughter (Auto-Adds Dressed Items to Inventory)</h3>
+          <h3 class="font-extrabold text-base text-yellow-400 flex items-center gap-2"><i class="fa-solid fa-scale-balanced"></i> Farm-to-Shop Daily Process</h3>
           <span class="text-xs bg-slate-900 border border-yellow-500/30 px-3 py-1 rounded-lg text-slate-300">Formula: <strong>Expected Dressed = Slaughtered Live Weight × 70%</strong> (30% Waste)</span>
         </div>
-        <div class="space-y-3">
+        <div class="space-y-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
           <div>
-            <h4 class="text-sm font-bold text-sky-300">1. Farm Intake</h4>
-            <p class="text-xs text-slate-400">Record the animal type, total animals received, their total live weight, and animals that died before slaughter.</p>
+            <h4 class="text-sm font-bold text-sky-300">Morning — Record Animal Intake</h4>
+            <p class="text-xs text-slate-400">Save the animals received and their total live weight. Slaughter and death details are recorded separately in the evening.</p>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <label class="block text-xs text-slate-400 font-semibold">Animal type
-              <select id="sl-animal-type" onchange="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            <label class="block text-xs text-slate-400 font-semibold">Animal type received
+              <select id="sl-intake-animal-type" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
                 <option value="Broiler">Broiler</option>
                 <option value="Layer">Layer</option>
                 <option value="Parents">Parents</option>
               </select>
             </label>
-            <label class="block text-xs text-slate-400 font-semibold">Number of live animals received (Count)
-              <input type="number" id="sl-count" min="1" step="1" placeholder="Enter count" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            <label class="block text-xs text-slate-400 font-semibold">Animals received (Count)
+              <input type="number" id="sl-intake-count" min="1" step="1" placeholder="Enter count received" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
             </label>
             <label class="block text-xs text-yellow-400 font-bold">Total live intake weight (kg)
-              <input type="number" min="0.01" step="0.1" id="sl-live-kg" placeholder="Enter total live weight" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
+              <input type="number" min="0.01" step="0.1" id="sl-intake-live-kg" placeholder="Enter total live weight" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-extrabold">
             </label>
-            <label class="block text-xs text-red-300 font-semibold">Dead animals before slaughter (Count)
-              <input type="number" id="sl-dead-count" min="0" step="1" value="0" placeholder="0" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
-            </label>
+            <div class="flex items-end">
+              <button type="button" onclick="recordFarmIntake()" class="w-full bg-sky-400 hover:bg-sky-300 text-slate-950 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider transition"><i class="fa-solid fa-floppy-disk mr-1"></i> Save Morning Intake</button>
+            </div>
           </div>
         </div>
-        <div class="space-y-3 border-t border-slate-800 pt-4">
+        <div class="space-y-4 rounded-xl border border-yellow-500/30 bg-yellow-500/5 p-4">
           <div>
-            <h4 class="text-sm font-bold text-yellow-400">2. Slaughter Information</h4>
-            <p class="text-xs text-slate-400">Choose the same animal type as the intake above, then record only animals actually slaughtered after pre-slaughter deaths.</p>
+            <h4 class="text-sm font-bold text-yellow-400">Evening — Record Deaths & Slaughter</h4>
+            <p class="text-xs text-slate-400">Choose a saved morning intake. Enter animals that died before slaughter and the actual slaughter totals; this record stays linked to the selected intake.</p>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <label class="block text-xs text-slate-400 font-semibold">Animal type slaughtered
-              <select id="sl-slaughter-animal-type" onchange="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
-                <option value="Broiler">Broiler</option>
-                <option value="Layer">Layer</option>
-                <option value="Parents">Parents</option>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <label class="block text-xs text-slate-400 font-semibold lg:col-span-2">Morning intake to reconcile
+              <select id="sl-intake-id" onchange="onFarmIntakeSelected()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+                <option value="">Save a morning intake first</option>
               </select>
             </label>
-            <label class="block text-xs text-slate-400 font-semibold">Number of animals slaughtered (Count)
+            <div id="sl-selected-intake-summary" class="flex items-center rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-xs text-slate-400 lg:col-span-2" aria-live="polite">Select an intake to see its animal count and live weight.</div>
+            <label class="block text-xs text-red-300 font-semibold">Dead before slaughter (Count)
+              <input type="number" id="sl-dead-count" min="0" step="1" value="0" placeholder="0" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
+            </label>
+            <label class="block text-xs text-slate-400 font-semibold">Animals slaughtered (Count)
               <input type="number" id="sl-slaughter-count" min="1" step="1" placeholder="Enter slaughtered count" oninput="calculateSlaughterPreview()" class="mt-1.5 w-full px-3 py-2.5 rounded-xl text-sm font-bold">
             </label>
             <label class="block text-xs text-yellow-400 font-bold">Total live weight of slaughtered animals (kg)
@@ -729,6 +731,20 @@
             <button onclick="recordSlaughterBatch()" class="w-full bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-yellow-400/20 flex items-center justify-center gap-2"><i class="fa-solid fa-plus-circle text-sm"></i> Save & Add to Shop Stock</button>
           </div>
         </div>
+      </div>
+      <div class="card p-5 overflow-x-auto">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+          <h3 class="font-bold text-base text-white">Morning Farm Intake Log</h3>
+          <span class="text-xs text-slate-400">Intakes remain available here until their evening slaughter is recorded</span>
+        </div>
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
+              <th class="py-3 px-3">Intake & Date</th><th class="py-3 px-3">Animal Type</th><th class="py-3 px-3">Animals Received</th><th class="py-3 px-3">Total Live Weight</th><th class="py-3 px-3">Evening Status</th>
+            </tr>
+          </thead>
+          <tbody id="farm-intake-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
       </div>
       <div class="card p-5 overflow-x-auto">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">

@@ -101,7 +101,7 @@ The backend and MongoDB API remain independently runnable and deployable.
 
 * The frontend loads application data from `GET /api/state` after login and saves
   changes (debounced) with `PUT /api/state`. Business data is stored in MongoDB.
-* The backend uses collections for inventory, sales, slaughter batches, staff,
+* The backend uses collections for inventory, sales, morning farm intakes, slaughter batches, staff,
   attendance, deliveries, subscriptions, receivables, history, and users.
 * The page polls the server every 20 seconds while the user is idle.
 

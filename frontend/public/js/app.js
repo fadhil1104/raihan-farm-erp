@@ -372,6 +372,7 @@ function ensureStateCollections() {
   delete state.employees;
   if (!Array.isArray(state.customers)) state.customers = [];
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  if (!Array.isArray(state.farmIntakes)) state.farmIntakes = [];
   if (Array.isArray(state.attendanceLogs)) {
     state.attendanceLogs = state.attendanceLogs.map((log) => {
       if (log.staffId !== undefined || log.empId === undefined) return log;
@@ -803,6 +804,45 @@ function removeSlaughterOutputRow(button) {
   calculateSlaughterPreview();
 }
 
+function getPendingFarmIntakes() {
+  const slaughteredIntakeIds = new Set((state?.slaughterBatches || []).map((batch) => String(batch.intakeId || '')));
+  return (state?.farmIntakes || []).filter((intake) => !slaughteredIntakeIds.has(String(intake.id)));
+}
+
+function onFarmIntakeSelected() {
+  $('sl-dead-count').value = '0';
+  $('sl-slaughter-count').value = '';
+  $('sl-slaughter-live-kg').value = '';
+  $('slaughter-output-rows').innerHTML = '';
+  addSlaughterOutputRow('slaughter-output-rows');
+  calculateSlaughterPreview();
+}
+
+function recordFarmIntake() {
+  const animalType = $('sl-intake-animal-type').value;
+  const count = Number($('sl-intake-count').value);
+  const liveKg = Number($('sl-intake-live-kg').value);
+  if (!['Broiler', 'Layer', 'Parents'].includes(animalType) ||
+      !Number.isInteger(count) || count <= 0 ||
+      !Number.isFinite(liveKg) || liveKg <= 0) {
+    return showToast('Enter a valid animal type, whole number received, and total live weight for the morning intake.', 'error');
+  }
+
+  const now = new Date();
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  state.farmIntakes.unshift({
+    id: 'INTAKE-' + now.getTime(),
+    date: `${getTodayDate()} ${time}`,
+    animalType,
+    count,
+    liveKg: +liveKg.toFixed(2)
+  });
+  $('sl-intake-count').value = '';
+  $('sl-intake-live-kg').value = '';
+  saveState();
+  showToast('Morning farm intake saved. Select it in the evening to record deaths and slaughter.', 'success');
+}
+
 function readSlaughterOutputRows(containerId) {
   return [...$(containerId).querySelectorAll('[data-output-row]')].map((row) => {
     const categoryId = row.querySelector('[data-output-category]').value;
@@ -816,12 +856,12 @@ function readSlaughterOutputRows(containerId) {
 }
 
 function calculateSlaughterPreview() {
-  const intakeCount = Math.max(0, Number($('sl-count').value) || 0);
+  const intake = (state?.farmIntakes || []).find((entry) => String(entry.id) === $('sl-intake-id').value);
+  const intakeCount = Math.max(0, Number(intake?.count) || 0);
   const deadCount = Math.max(0, Number($('sl-dead-count').value) || 0);
   const slaughterCount = Number($('sl-slaughter-count').value) || 0;
-  const intakeLiveKg = Math.max(0, Number($('sl-live-kg').value) || 0);
+  const intakeLiveKg = Math.max(0, Number(intake?.liveKg) || 0);
   const liveKg = Math.max(0, Number($('sl-slaughter-live-kg').value) || 0);
-  const sameAnimalType = $('sl-animal-type').value === $('sl-slaughter-animal-type').value;
   const actualKg = [...document.querySelectorAll('#slaughter-output-rows [data-output-weight]')]
     .reduce((total, input) => total + Math.max(0, Number(input.value) || 0), 0);
   const actualWasteKg = Math.max(0, liveKg - actualKg);
@@ -834,32 +874,38 @@ function calculateSlaughterPreview() {
   $('sl-dead-count').max = String(intakeCount);
   $('sl-slaughter-count').max = String(Math.max(0, intakeCount - deadCount));
   $('sl-slaughter-live-kg').max = String(intakeLiveKg);
+  $('sl-selected-intake-summary').innerText = intake
+    ? `${intake.animalType} • ${intake.count} received • ${Number(intake.liveKg).toFixed(2)} kg live weight • Intake ${intake.id} (${intake.date})`
+    : 'Select a saved morning intake to see its animal count and live weight.';
 }
 
 function recordSlaughterBatch() {
-  const count = Number($('sl-count').value) || 0;
-  const liveKg = Number($('sl-live-kg').value) || 0;
-  const animalType = $('sl-animal-type').value;
+  const intake = (state.farmIntakes || []).find((entry) => String(entry.id) === $('sl-intake-id').value);
+  if (!intake || (state.slaughterBatches || []).some((batch) => String(batch.intakeId || '') === String(intake.id))) {
+    return showToast('Select an available morning intake before recording evening slaughter.', 'error');
+  }
+  const count = Number(intake.count);
+  const liveKg = Number(intake.liveKg);
+  const animalType = intake.animalType;
   const deadBeforeSlaughterCount = Number($('sl-dead-count').value) || 0;
-  const slaughterAnimalType = $('sl-slaughter-animal-type').value;
+  const slaughterAnimalType = animalType;
   const slaughterCount = Number($('sl-slaughter-count').value) || 0;
   const slaughterLiveKg = Number($('sl-slaughter-live-kg').value) || 0;
   const outputs = readSlaughterOutputRows('slaughter-output-rows');
   const actualKg = Number(outputs.reduce((total, output) => total + output.actualKg, 0).toFixed(2));
-  const sameAnimalType = animalType === slaughterAnimalType;
   const animalTypes = ['Broiler', 'Layer', 'Parents'];
-  if (!animalTypes.includes(animalType) || !animalTypes.includes(slaughterAnimalType) || !sameAnimalType ||
+  if (!animalTypes.includes(animalType) ||
       !Number.isInteger(count) || count <= 0 || !Number.isInteger(deadBeforeSlaughterCount) ||
       deadBeforeSlaughterCount < 0 || deadBeforeSlaughterCount > count ||
       !Number.isInteger(slaughterCount) || slaughterCount <= 0 ||
-      (sameAnimalType && slaughterCount > count - deadBeforeSlaughterCount) ||
+      slaughterCount > count - deadBeforeSlaughterCount ||
       !Number.isFinite(liveKg) || liveKg <= 0 || !Number.isFinite(slaughterLiveKg) ||
-      slaughterLiveKg <= 0 || (sameAnimalType && slaughterLiveKg > liveKg) ||
+      slaughterLiveKg <= 0 || slaughterLiveKg > liveKg ||
       !outputs.length || outputs.some((output) => !output.categoryId ||
         !Number.isFinite(output.actualKg) || output.actualKg <= 0 ||
         !state.inventory.some((item) => String(item.id) === output.categoryId && inventoryUnit(item) === 'kg')) ||
       actualKg > slaughterLiveKg) {
-    return showToast('Enter valid intake and slaughter details using the same animal type. Slaughter count and weight cannot exceed the intake remaining after deaths.', 'error');
+    return showToast('Enter valid evening details. Slaughter count cannot exceed the selected intake after deaths, and slaughter weight cannot exceed its intake weight.', 'error');
   }
 
   const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
@@ -867,6 +913,8 @@ function recordSlaughterBatch() {
 
   state.slaughterBatches.unshift({
     id: 'BATCH-' + Date.now().toString().slice(-7),
+    intakeId: intake.id,
+    intakeDate: intake.date,
     date: `${getTodayDate()} ${nowTime}`,
     source: [...new Set(outputs.map((output) =>
       state.inventory.find((item) => String(item.id) === output.categoryId)?.source
@@ -884,7 +932,7 @@ function recordSlaughterBatch() {
     invItem.stockKg = +(Number(invItem.stockKg || 0) + output.actualKg).toFixed(2);
   });
 
-  ['sl-count', 'sl-live-kg', 'sl-slaughter-count', 'sl-slaughter-live-kg'].forEach((id) => { $(id).value = ''; });
+  ['sl-slaughter-count', 'sl-slaughter-live-kg'].forEach((id) => { $(id).value = ''; });
   $('sl-dead-count').value = '0';
   $('slaughter-output-rows').innerHTML = '';
   addSlaughterOutputRow('slaughter-output-rows');
@@ -2978,6 +3026,18 @@ function renderSlaughterProducts() {
         : '<option value="">Add kg-based meat inventory first</option>';
       if (meatItems.some((item) => String(item.id) === selectedValue)) select.value = selectedValue;
     });
+  const intakeSelect = $('sl-intake-id');
+  const selectedIntakeId = intakeSelect.value;
+  const pendingIntakes = getPendingFarmIntakes();
+  intakeSelect.innerHTML = pendingIntakes.length
+    ? pendingIntakes.map((intake) => `<option value="${esc(intake.id)}">${esc(intake.date)} — ${esc(intake.animalType)} — ${Number(intake.count)} animals, ${Number(intake.liveKg).toFixed(2)} kg</option>`).join('')
+    : '<option value="">No pending intakes — save a morning intake first</option>';
+  if (pendingIntakes.some((intake) => String(intake.id) === selectedIntakeId)) {
+    intakeSelect.value = selectedIntakeId;
+  } else if (pendingIntakes.length) {
+    intakeSelect.value = String(pendingIntakes[0].id);
+  }
+  calculateSlaughterPreview();
 }
 
 function renderAll() {
@@ -3052,6 +3112,21 @@ function renderAll() {
       <span class="px-2 py-1 rounded bg-slate-800 text-slate-300 font-semibold shrink-0">${esc(d.status)}</span>
     </div>`).join('');
 
+  const slaughteredIntakeIds = new Set((state.slaughterBatches || []).map((batch) => String(batch.intakeId || '')));
+  $('farm-intake-tbody').innerHTML = (state.farmIntakes || []).length === 0
+    ? '<tr><td colspan="5" class="py-6 text-center text-sm text-slate-400">No morning intakes recorded yet.</td></tr>'
+    : state.farmIntakes.map((intake) => {
+      const reconciled = slaughteredIntakeIds.has(String(intake.id));
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="py-3 px-3"><div class="font-bold text-sky-300">${esc(intake.id)}</div><div class="text-xs text-slate-400">${esc(intake.date)}</div></td>
+          <td class="py-3 px-3 font-semibold">${esc(intake.animalType)}</td>
+          <td class="py-3 px-3 font-bold">${Number(intake.count)} Head</td>
+          <td class="py-3 px-3 font-semibold">${Number(intake.liveKg).toFixed(2)} kg</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold ${reconciled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'}">${reconciled ? 'Slaughter recorded' : 'Awaiting evening entry'}</span></td>
+        </tr>`;
+    }).join('');
+
   // Slaughter table
   $('slaughter-tbody').innerHTML = state.slaughterBatches.length === 0
     ? '<tr><td colspan="13" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>'
@@ -3060,7 +3135,7 @@ function renderAll() {
     const outputs = batchOutputs(b);
     return `
       <tr class="hover:bg-slate-800/40 transition">
-        <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(b.id)}</div><div class="text-xs text-slate-400">${esc(b.date)}</div></td>
+        <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(b.id)}</div><div class="text-xs text-slate-400">${esc(b.date)}</div><div class="text-xs text-sky-300">Morning intake: ${esc(b.intakeId || 'Legacy record')}</div></td>
         <td class="py-3 px-3"><div class="font-bold text-white">${outputs.map((output) => `${esc(output.categoryName)} <span class="text-emerald-300">+${Number(output.actualKg || 0).toFixed(2)} kg</span>`).join('<br>')}</div><div class="text-xs text-slate-400">${esc(b.source)}</div><div class="text-xs text-sky-300">Intake: ${esc(b.animalType || '—')}</div></td>
         <td class="py-3 px-3 font-bold">${b.count} Head</td>
         <td class="py-3 px-3 font-semibold">${Number(b.liveKg).toFixed(1)} kg</td>
