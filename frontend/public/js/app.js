@@ -63,6 +63,7 @@ let posIncomePeriod = 'DAY';
 let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
+let cashierSelectedDate = getTodayDate();
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
 let selectedArchiveDate = getTodayDate();
 let archiveDateRange = null;
@@ -350,23 +351,30 @@ function renderCashierDrawer() {
   if (!state) return;
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
   const today = getTodayDate();
-  const entries = state.cashierEntries.filter((entry) => entry.date === today);
+  const isAdmin = currentUser?.role === 'admin';
+  if (!isAdmin || cashierSelectedDate > today) cashierSelectedDate = today;
+  const selectedDate = cashierSelectedDate;
+  const viewingHistory = selectedDate !== today;
+  const entries = state.cashierEntries.filter((entry) => entry.date === selectedDate);
   const opening = entries.find((entry) => entry.type === 'OPENING');
   const withdrawals = entries.filter((entry) => entry.type === 'WITHDRAWAL');
-  const cashSales = (state.posSales || []).filter((sale) => sale.date === today && sale.payment === 'CASH')
+  const cashSales = (state.posSales || []).filter((sale) => sale.date === selectedDate && sale.payment === 'CASH')
     .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
   const withdrawn = withdrawals.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const balance = Number(opening?.amount || 0) + cashSales - withdrawn;
 
-  $('cashier-date-label').innerText = today;
+  $('cashier-view-date').max = today;
+  $('cashier-view-date').value = selectedDate;
+  $('cashier-date-label').innerText = selectedDate;
   $('cashier-opening-balance').innerText = opening ? `Rs. ${Number(opening.amount).toLocaleString()}` : 'Not entered';
   $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
   $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
   $('cashier-current-balance').innerText = `Rs. ${balance.toLocaleString()}`;
-  $('cashier-reset-button').classList.toggle('hidden', currentUser?.role !== 'admin');
-  $('cashier-opening-form').classList.toggle('hidden', !!opening);
-  $('cashier-withdrawal-form').classList.toggle('hidden', !opening);
-  $('cashier-opening-note').classList.toggle('hidden', !opening);
+  $('cashier-reset-button').classList.toggle('hidden', !isAdmin || viewingHistory);
+  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening);
+  $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-opening-note').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-history-note').classList.toggle('hidden', !viewingHistory);
   $('cashier-entry-tbody').innerHTML = entries.length
     ? entries.map((entry) => `
       <tr>
@@ -377,10 +385,20 @@ function renderCashierDrawer() {
         <td class="py-2 px-3 text-right font-bold">${entry.type === 'WITHDRAWAL' ? '−' : ''} Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
         <td class="py-2 px-3">${esc(entry.note || '—')}</td>
       </tr>`).join('')
-    : '<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded today.</td></tr>';
+    : `<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
+}
+
+function selectCashierDate() {
+  const selectedDate = $('cashier-view-date').value;
+  cashierSelectedDate = selectedDate && selectedDate <= getTodayDate()
+    ? selectedDate : getTodayDate();
+  renderCashierDrawer();
 }
 
 async function addCashierEntry(type) {
+  if (currentUser?.role === 'admin' && cashierSelectedDate !== getTodayDate()) {
+    return showToast('Historical cashier balances are read-only. Select today to record cash.', 'error');
+  }
   const amountInput = type === 'OPENING' ? $('cashier-opening-amount') : $('cashier-withdrawal-amount');
   const amount = Number(amountInput.value);
   const takenBy = type === 'WITHDRAWAL' ? $('cashier-taken-by').value.trim() : '';
@@ -413,6 +431,9 @@ function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
 async function resetCashierDrawer() {
   if (!currentUser || currentUser.role !== 'admin') {
     return showToast('Only an admin can reset the cashier drawer.', 'error');
+  }
+  if (cashierSelectedDate !== getTodayDate()) {
+    return showToast('Historical cashier balances are read-only. Select today to reset records.', 'error');
   }
   const confirmed = window.confirm(
     'Reset the cashier drawer? This permanently deletes all recorded opening cash and withdrawals for every date. POS sales are not deleted.'
