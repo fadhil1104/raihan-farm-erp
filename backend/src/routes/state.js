@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { collections, DailyVault, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { todayStr } = require('../utils/time');
 const { randomUUID } = require('node:crypto');
 
 const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
@@ -449,8 +450,16 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
   if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
     return res.status(400).json({ error: 'A valid cashier date is required.' });
   }
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ error: 'Enter an amount greater than zero.' });
+  if (date !== todayStr()) {
+    return res.status(409).json({ error: 'Cashier entries can only be recorded for the current shop date.' });
+  }
+  if (!Number.isFinite(amount) || amount < 0 || (type === 'WITHDRAWAL' && amount === 0)) {
+    return res.status(400).json({ error: type === 'OPENING'
+      ? 'Enter a valid opening amount (zero or more).'
+      : 'Enter a withdrawal amount greater than zero.' });
+  }
+  if (type === 'OPENING' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only an admin can count and confirm opening cash.' });
   }
   if (type === 'WITHDRAWAL' && !takenBy) {
     return res.status(400).json({ error: 'Enter the name of the person taking the cash.' });
@@ -458,8 +467,38 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
 
   const dayEntries = await CashierEntry.find({ date }).lean();
   const opening = dayEntries.find((entry) => entry.type === 'OPENING');
+  let previousDate = '';
+  let previousClosingAmount;
   if (type === 'OPENING' && opening) {
     return res.status(409).json({ error: 'Today’s opening cash has already been recorded.' });
+  }
+  if (type === 'OPENING') {
+    const previousDay = new Date(`${date}T00:00:00.000Z`);
+    previousDay.setUTCDate(previousDay.getUTCDate() - 1);
+    previousDate = previousDay.toISOString().slice(0, 10);
+    const previousEntries = await CashierEntry.find({ date: previousDate }).lean();
+    const previousOpening = previousEntries.find((entry) => entry.type === 'OPENING');
+    if (previousOpening) {
+      const [previousCashSales] = await PosSale.aggregate([
+        { $match: { date: previousDate, payment: 'CASH' } },
+        { $group: { _id: null, total: { $sum: '$totalRs' } } }
+      ]);
+      const previousWithdrawals = previousEntries
+        .filter((entry) => entry.type === 'WITHDRAWAL')
+        .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      previousClosingAmount = Math.round((
+        Number(previousOpening.amount || 0)
+        + Number(previousCashSales?.total || 0)
+        - previousWithdrawals
+      ) * 100) / 100;
+      if (Math.round(amount * 100) !== Math.round(previousClosingAmount * 100)) {
+        return res.status(409).json({
+          error: `Counted opening cash (Rs. ${amount.toLocaleString()}) does not match ${previousDate} closing cash (Rs. ${previousClosingAmount.toLocaleString()}). Count again to continue.`
+        });
+      }
+    } else {
+      previousDate = '';
+    }
   }
   if (type === 'WITHDRAWAL') {
     if (!opening) return res.status(409).json({ error: 'Record the day’s opening cash before recording a withdrawal.' });
@@ -487,7 +526,9 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     amount: Math.round(amount * 100) / 100,
     takenBy: type === 'WITHDRAWAL' ? takenBy : '',
     recordedBy: String(req.user.label || req.user.username),
-    note
+    note,
+    previousDate: type === 'OPENING' ? previousDate : '',
+    previousClosingAmount: type === 'OPENING' ? previousClosingAmount : undefined
   };
   try {
     const saved = await CashierEntry.create(entry);
@@ -498,11 +539,6 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     }
     throw err;
   }
-});
-
-router.delete('/cashier-entries', requireAuth, requireAdmin, async (req, res) => {
-  const result = await CashierEntry.deleteMany({});
-  res.json({ ok: true, deletedCount: result.deletedCount });
 });
 
 router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {

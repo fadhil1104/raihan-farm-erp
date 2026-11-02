@@ -64,6 +64,7 @@ let posIncomeDate = getTodayDate();
 let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
 let cashierSelectedDate = getTodayDate();
+let cashierAutoTodayDate = getTodayDate();
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
 let selectedArchiveDate = getTodayDate();
 let archiveDateRange = null;
@@ -347,21 +348,52 @@ function posSaleItemsHtml(sale) {
   ).join('');
 }
 
+function getPreviousDate(date) {
+  const previous = new Date(`${date}T00:00:00`);
+  previous.setDate(previous.getDate() - 1);
+  return fmtDate(previous);
+}
+
+function getNextDate(date) {
+  const next = new Date(`${date}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  return fmtDate(next);
+}
+
+function getCashierDayTotals(date) {
+  const entries = state.cashierEntries.filter((entry) => entry.date === date);
+  const opening = entries.find((entry) => entry.type === 'OPENING');
+  const cashSales = (state.posSales || []).filter((sale) => sale.date === date && sale.payment === 'CASH')
+    .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
+  const withdrawn = entries.filter((entry) => entry.type === 'WITHDRAWAL')
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const balance = Number(opening?.amount || 0) + cashSales - withdrawn;
+  const confirmedClose = state.cashierEntries.find((entry) =>
+    entry.date === getNextDate(date) && entry.type === 'OPENING' && entry.previousDate === date
+      && Number.isFinite(Number(entry.previousClosingAmount)));
+  return {
+    entries, opening, cashSales, withdrawn, balance,
+    closingBalance: confirmedClose ? Number(confirmedClose.previousClosingAmount) : balance,
+    closingConfirmed: !!confirmedClose
+  };
+}
+
 function renderCashierDrawer() {
   if (!state) return;
   if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
   const today = getTodayDate();
+  if (cashierAutoTodayDate !== today) {
+    cashierSelectedDate = today;
+    cashierAutoTodayDate = today;
+  }
+  if (cashierSelectedDate > today) cashierSelectedDate = today;
   const isAdmin = currentUser?.role === 'admin';
-  if (!isAdmin || cashierSelectedDate > today) cashierSelectedDate = today;
   const selectedDate = cashierSelectedDate;
   const viewingHistory = selectedDate !== today;
-  const entries = state.cashierEntries.filter((entry) => entry.date === selectedDate);
-  const opening = entries.find((entry) => entry.type === 'OPENING');
-  const withdrawals = entries.filter((entry) => entry.type === 'WITHDRAWAL');
-  const cashSales = (state.posSales || []).filter((sale) => sale.date === selectedDate && sale.payment === 'CASH')
-    .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
-  const withdrawn = withdrawals.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-  const balance = Number(opening?.amount || 0) + cashSales - withdrawn;
+  const { entries, opening, cashSales, withdrawn, balance, closingBalance, closingConfirmed } = getCashierDayTotals(selectedDate);
+  const previousDate = getPreviousDate(today);
+  const previousDay = getCashierDayTotals(previousDate);
+  const awaitingCount = !viewingHistory && !opening && !!previousDay.opening;
 
   $('cashier-view-date').max = today;
   $('cashier-view-date').value = selectedDate;
@@ -369,21 +401,32 @@ function renderCashierDrawer() {
   $('cashier-opening-balance').innerText = opening ? `Rs. ${Number(opening.amount).toLocaleString()}` : 'Not entered';
   $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
   $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
-  $('cashier-current-balance').innerText = `Rs. ${balance.toLocaleString()}`;
-  $('cashier-reset-button').classList.toggle('hidden', !isAdmin || viewingHistory);
-  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening);
-  $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-balance-label').innerText = awaitingCount ? 'Previous Close Awaiting Confirmation'
+    : viewingHistory ? (closingConfirmed ? 'Closing Cash (Confirmed)' : 'Expected Closing Cash')
+    : 'Expected Cash in Cashier';
+  $('cashier-current-balance').innerText = awaitingCount
+    ? `Rs. ${previousDay.balance.toLocaleString()}`
+    : opening || viewingHistory ? `Rs. ${(viewingHistory ? closingBalance : balance).toLocaleString()}` : 'Opening count required';
+  $('cashier-previous-close-panel').classList.toggle('hidden', !awaitingCount);
+  $('cashier-previous-date').innerText = previousDate;
+  $('cashier-previous-close').innerText = `Rs. ${previousDay.balance.toLocaleString()}`;
+  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening || !isAdmin);
+  $('cashier-admin-required').classList.toggle('hidden', viewingHistory || !!opening || isAdmin);
   $('cashier-opening-note').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
   $('cashier-history-note').classList.toggle('hidden', !viewingHistory);
+  $('cashier-opening-label-text').innerText = awaitingCount
+    ? `Admin counted opening cash (must match ${previousDate} closing amount)`
+    : 'Admin counted opening cash (Rs.)';
   $('cashier-entry-tbody').innerHTML = entries.length
     ? entries.map((entry) => `
       <tr>
         <td class="py-2 px-3">${esc(entry.time || '')}</td>
-        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Starting cash' : 'Cash taken out'}</td>
+        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Opening cash confirmed' : 'Cash taken out'}</td>
         <td class="py-2 px-3">${esc(entry.takenBy || '—')}</td>
         <td class="py-2 px-3">${esc(entry.recordedBy || '—')}</td>
         <td class="py-2 px-3 text-right font-bold">${entry.type === 'WITHDRAWAL' ? '−' : ''} Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
-        <td class="py-2 px-3">${esc(entry.note || '—')}</td>
+        <td class="py-2 px-3">${esc(entry.note || (entry.type === 'OPENING' && entry.previousDate ? `Confirmed previous close for ${entry.previousDate}` : '—'))}</td>
       </tr>`).join('')
     : `<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
 }
@@ -396,14 +439,19 @@ function selectCashierDate() {
 }
 
 async function addCashierEntry(type) {
-  if (currentUser?.role === 'admin' && cashierSelectedDate !== getTodayDate()) {
+  if (cashierSelectedDate !== getTodayDate()) {
     return showToast('Historical cashier balances are read-only. Select today to record cash.', 'error');
+  }
+  if (type === 'OPENING' && currentUser?.role !== 'admin') {
+    return showToast('Only an admin can count and confirm opening cash.', 'error');
   }
   const amountInput = type === 'OPENING' ? $('cashier-opening-amount') : $('cashier-withdrawal-amount');
   const amount = Number(amountInput.value);
   const takenBy = type === 'WITHDRAWAL' ? $('cashier-taken-by').value.trim() : '';
   const note = type === 'WITHDRAWAL' ? $('cashier-withdrawal-note').value.trim() : '';
-  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an amount greater than zero.', 'error');
+  if (!Number.isFinite(amount) || amount < 0 || (type === 'WITHDRAWAL' && amount === 0)) {
+    return showToast(type === 'OPENING' ? 'Enter a valid opening amount (zero or more).' : 'Enter an amount greater than zero.', 'error');
+  }
   if (type === 'WITHDRAWAL' && !takenBy) return showToast('Enter the name of the person taking the cash.', 'error');
 
   const button = type === 'OPENING' ? $('cashier-opening-button') : $('cashier-withdrawal-button');
@@ -417,7 +465,7 @@ async function addCashierEntry(type) {
       $('cashier-withdrawal-note').value = '';
     }
     renderAll();
-    showToast(type === 'OPENING' ? 'Today’s opening cash was recorded.' : 'Cash withdrawal recorded and deducted from the drawer.', 'success');
+    showToast(type === 'OPENING' ? 'Today’s counted opening cash was confirmed.' : 'Cash withdrawal recorded and deducted from the cashier balance.', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
@@ -427,32 +475,6 @@ async function addCashierEntry(type) {
 
 function setDailyCashOpening() { return addCashierEntry('OPENING'); }
 function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
-
-async function resetCashierDrawer() {
-  if (!currentUser || currentUser.role !== 'admin') {
-    return showToast('Only an admin can reset the cashier drawer.', 'error');
-  }
-  if (cashierSelectedDate !== getTodayDate()) {
-    return showToast('Historical cashier balances are read-only. Select today to reset records.', 'error');
-  }
-  const confirmed = window.confirm(
-    'Reset the cashier drawer? This permanently deletes all recorded opening cash and withdrawals for every date. POS sales are not deleted.'
-  );
-  if (!confirmed) return;
-
-  const button = $('cashier-reset-button');
-  button.disabled = true;
-  try {
-    await Api.resetCashierDrawer();
-    state.cashierEntries = [];
-    renderAll();
-    showToast('Cashier drawer records were reset. POS sales remain unchanged.', 'success');
-  } catch (err) {
-    showToast(err.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
 
 function openPosPrintOptions() { $('pos-print-options-modal').classList.remove('hidden'); }
 function closePosPrintOptions() { $('pos-print-options-modal').classList.add('hidden'); }
