@@ -36,7 +36,7 @@ const Customer = model('Customer', new Schema({
 
 const SlaughterBatch = model('SlaughterBatch', new Schema({
   ...base, id: String, intakeId: String, intakeDate: String, date: String, source: String, categoryId: String, categoryName: String,
-  animalType: String, count: Number, liveKg: Number, deadBeforeSlaughterCount: Number,
+  animalType: String, count: Number, liveKg: Number, deadBeforeSlaughterCount: Number, remainingCount: Number,
   slaughterAnimalType: String, slaughterCount: Number, slaughterLiveKg: Number,
   expectedKg: Number, actualKg: Number, wasteKg: Number, wastePct: Number
 }, opts));
