@@ -2051,8 +2051,6 @@ function updatePosLinePreview(source = 'refresh') {
   const item = state.inventory.find((i) => i.id === selectedPosCategoryId);
   if (!item) {
     $('pos-selected-label').innerText = 'No inventory item selected';
-    $('pos-line-preview').innerText = '—';
-    $('pos-unit-line-preview').innerText = '—';
     return;
   }
   const unitPrice = selectedPosUnitPrice(item);
@@ -2077,11 +2075,6 @@ function updatePosLinePreview(source = 'refresh') {
         ? String(Math.round(weight * unitPrice))
         : '';
     }
-    $('pos-line-preview').innerText = amountInput.value === ''
-      ? '—'
-      : `Rs. ${Math.round(Number(amountInput.value)).toLocaleString()}`;
-  } else {
-    $('pos-unit-line-preview').innerText = `Rs. ${Math.round((Number($('pos-quantity-input').value) || 0) * unitPrice).toLocaleString()}`;
   }
 }
 
