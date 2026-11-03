@@ -898,7 +898,7 @@
           </div>
           <div class="card-highlight p-5 space-y-4">
             <div class="flex items-center justify-between">
-              <h3 id="pos-quantity-title" class="font-bold text-xs uppercase tracking-wider text-yellow-400">2. Enter Scale Weight (kg) & Add to Bill</h3>
+              <h3 id="pos-quantity-title" class="font-bold text-xs uppercase tracking-wider text-yellow-400">2. Enter Weight (kg) or Bill Amount (Rs.)</h3>
               <span id="pos-selected-label" class="text-xs font-extrabold text-white bg-slate-800 px-3 py-1 rounded-lg">No inventory item selected</span>
             </div>
             <div id="pos-kg-presets" class="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -912,12 +912,13 @@
             <fieldset id="pos-chicken-cut-options" class="hidden rounded-xl border border-slate-700 bg-slate-950/60 p-3">
               <legend class="px-1 text-xs font-bold text-slate-300">Chicken preparation</legend>
               <div class="flex flex-wrap gap-4 text-xs font-semibold">
-                <label class="flex cursor-pointer items-center gap-2 text-slate-200"><input type="radio" name="pos-chicken-cut" value="whole" checked onchange="updatePosLinePreview()" class="accent-yellow-400"> Whole Chicken</label>
-                <label class="flex cursor-pointer items-center gap-2 text-yellow-300"><input type="radio" name="pos-chicken-cut" value="pieces" onchange="updatePosLinePreview()" class="accent-yellow-400"> Pieces (+ Rs. 200/kg)</label>
+                <label class="flex cursor-pointer items-center gap-2 text-slate-200"><input type="radio" name="pos-chicken-cut" value="whole" checked onchange="updatePosLinePreview('weight')" class="accent-yellow-400"> Whole Chicken</label>
+                <label class="flex cursor-pointer items-center gap-2 text-yellow-300"><input type="radio" name="pos-chicken-cut" value="pieces" onchange="updatePosLinePreview('weight')" class="accent-yellow-400"> Pieces (+ Rs. 200/kg)</label>
               </div>
             </fieldset>
-            <div id="pos-kg-control" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-              <div><label class="block text-xs text-slate-400 mb-1">Exact Weight (kg)</label><input type="number" step="0.05" id="pos-weight-input" placeholder="Enter weight" oninput="updatePosLinePreview()" class="w-full px-3.5 py-2.5 rounded-xl text-base font-black"></div>
+            <div id="pos-kg-control" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+              <div><label class="block text-xs text-slate-400 mb-1">Weight (kg)</label><input type="number" step="0.01" id="pos-weight-input" placeholder="Enter weight" oninput="updatePosLinePreview('weight')" class="w-full px-3.5 py-2.5 rounded-xl text-base font-black"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">Bill Amount (Rs.)</label><input type="number" min="0" step="1" id="pos-amount-input" placeholder="Enter amount or weight" oninput="updatePosLinePreview('amount')" class="w-full px-3.5 py-2.5 rounded-xl text-base font-black"></div>
               <div><label class="block text-xs text-slate-400 mb-1">Line Price Preview</label><div id="pos-line-preview" class="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-base font-black text-yellow-400">—</div></div>
               <button onclick="addItemToPosCart()" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-yellow-400/20 flex items-center justify-center gap-2"><i class="fa-solid fa-cart-plus"></i> Add to Customer Bill</button>
             </div>

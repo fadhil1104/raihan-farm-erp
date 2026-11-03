@@ -2029,11 +2029,14 @@ function selectPosProduct(id) {
   const wholeOption = document.querySelector('input[name="pos-chicken-cut"][value="whole"]');
   if (wholeOption) wholeOption.checked = true;
   $('pos-selected-label').innerText = `Selected: ${item.name} (Rs. ${inventoryPrice(item)} ${inventoryPriceLabel(item)})`;
-  $('pos-quantity-title').innerText = isKg ? '2. Enter Scale Weight (kg) & Add to Bill' : '2. Enter Whole Quantity & Add to Bill';
+  $('pos-quantity-title').innerText = isKg
+    ? '2. Enter Weight (kg) or Bill Amount (Rs.)'
+    : '2. Enter Whole Quantity & Add to Bill';
   $('pos-kg-presets').classList.toggle('hidden', !isKg);
   $('pos-kg-control').classList.toggle('hidden', !isKg);
   $('pos-unit-control').classList.toggle('hidden', isKg);
   $('pos-weight-input').value = '';
+  $('pos-amount-input').value = '';
   $('pos-quantity-input').value = '';
   if (!isKg) {
     $('pos-unit-quantity-label').innerText = unit === 'packet'
@@ -2042,8 +2045,8 @@ function selectPosProduct(id) {
   renderPosProducts();
   updatePosLinePreview();
 }
-function setPosWeight(kg) { $('pos-weight-input').value = kg; updatePosLinePreview(); }
-function updatePosLinePreview() {
+function setPosWeight(kg) { $('pos-weight-input').value = kg; updatePosLinePreview('weight'); }
+function updatePosLinePreview(source = 'refresh') {
   if (!state) return;
   const item = state.inventory.find((i) => i.id === selectedPosCategoryId);
   if (!item) {
@@ -2055,7 +2058,28 @@ function updatePosLinePreview() {
   const unitPrice = selectedPosUnitPrice(item);
   $('pos-selected-label').innerText = `Selected: ${item.name}${isPiecesOptionSelected() ? ' — Pieces' : ''} (Rs. ${unitPrice} ${inventoryPriceLabel(item)})`;
   if (inventoryUnit(item) === 'kg') {
-    $('pos-line-preview').innerText = `Rs. ${Math.round((Number($('pos-weight-input').value) || 0) * unitPrice).toLocaleString()}`;
+    const weightInput = $('pos-weight-input');
+    const amountInput = $('pos-amount-input');
+    if (source === 'amount') {
+      if (amountInput.value === '') {
+        weightInput.value = '';
+      } else {
+        const amount = Number(amountInput.value);
+        if (Number.isFinite(amount) && amount >= 0 && unitPrice > 0) {
+          weightInput.value = (Math.round((amount / unitPrice) * 100) / 100).toFixed(2);
+        } else {
+          weightInput.value = '';
+        }
+      }
+    } else if (source === 'weight') {
+      const weight = Number(weightInput.value);
+      amountInput.value = Number.isFinite(weight) && weight > 0
+        ? String(Math.round(weight * unitPrice))
+        : '';
+    }
+    $('pos-line-preview').innerText = amountInput.value === ''
+      ? '—'
+      : `Rs. ${Math.round(Number(amountInput.value)).toLocaleString()}`;
   } else {
     $('pos-unit-line-preview').innerText = `Rs. ${Math.round((Number($('pos-quantity-input').value) || 0) * unitPrice).toLocaleString()}`;
   }
@@ -2077,17 +2101,23 @@ function addItemToPosCart() {
   }
 
   const isPieces = supportsChickenCutOption(item) && isPiecesOptionSelected();
-  const unitPrice = inventoryPrice(item) + (isPieces ? PIECES_PRICE_INCREASE_PER_KG : 0);
+  const listedUnitPrice = inventoryPrice(item) + (isPieces ? PIECES_PRICE_INCREASE_PER_KG : 0);
+  const lineTotal = unit === 'kg' ? Number($('pos-amount-input').value) : Math.round(quantity * listedUnitPrice);
+  if (!Number.isFinite(lineTotal) || lineTotal < 0) {
+    return showToast('Enter a valid bill amount.', 'error');
+  }
+  const unitPrice = quantity > 0 ? lineTotal / quantity : listedUnitPrice;
   const existing = posCart.find((c) => c.id === item.id && Boolean(c.isPieces) === isPieces && !c.isLoyaltyFreeGiveaway);
   if (existing) {
     existing.quantity = unit === 'kg' ? +(existing.quantity + quantity).toFixed(2) : existing.quantity + quantity;
-    existing.lineTotal = Math.round(existing.quantity * existing.unitPrice);
+    existing.lineTotal += lineTotal;
+    existing.unitPrice = existing.lineTotal / existing.quantity;
   } else {
     posCart.push({
       id: item.id, name: item.name, unitType: unit, ...(isPieces ? { isPieces: true } : {}),
       quantity: unit === 'kg' ? +quantity.toFixed(2) : quantity,
       packWeightGrams: Number(item.packWeightGrams || 0),
-      unitPrice, lineTotal: Math.round(quantity * unitPrice)
+      unitPrice, lineTotal
     });
   }
   renderPosCart();
