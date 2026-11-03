@@ -458,8 +458,8 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
       ? 'Enter a valid opening amount (zero or more).'
       : 'Enter a withdrawal amount greater than zero.' });
   }
-  if (type === 'OPENING' && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Only an admin can count and confirm opening cash.' });
+  if (note.length > 500) {
+    return res.status(400).json({ error: 'The cashier note must be 500 characters or fewer.' });
   }
   if (type === 'WITHDRAWAL' && !takenBy) {
     return res.status(400).json({ error: 'Enter the name of the person taking the cash.' });
@@ -492,9 +492,11 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
         - previousWithdrawals
       ) * 100) / 100;
       if (Math.round(amount * 100) !== Math.round(previousClosingAmount * 100)) {
-        return res.status(409).json({
-          error: `Counted opening cash (Rs. ${amount.toLocaleString()}) does not match ${previousDate} closing cash (Rs. ${previousClosingAmount.toLocaleString()}). Count again to continue.`
-        });
+        if (!note) {
+          return res.status(400).json({
+            error: `Counted opening cash differs from ${previousDate} closing cash (Rs. ${previousClosingAmount.toLocaleString()}). Enter a reason to continue.`
+          });
+        }
       }
     } else {
       previousDate = '';

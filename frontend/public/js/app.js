@@ -387,7 +387,6 @@ function renderCashierDrawer() {
     cashierAutoTodayDate = today;
   }
   if (cashierSelectedDate > today) cashierSelectedDate = today;
-  const isAdmin = currentUser?.role === 'admin';
   const selectedDate = cashierSelectedDate;
   const viewingHistory = selectedDate !== today;
   const { entries, opening, cashSales, withdrawn, balance, closingBalance, closingConfirmed } = getCashierDayTotals(selectedDate);
@@ -410,14 +409,15 @@ function renderCashierDrawer() {
   $('cashier-previous-close-panel').classList.toggle('hidden', !awaitingCount);
   $('cashier-previous-date').innerText = previousDate;
   $('cashier-previous-close').innerText = `Rs. ${previousDay.balance.toLocaleString()}`;
-  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening || !isAdmin);
-  $('cashier-admin-required').classList.toggle('hidden', viewingHistory || !!opening || isAdmin);
+  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening);
+  $('cashier-admin-required').classList.add('hidden');
   $('cashier-opening-note').classList.toggle('hidden', viewingHistory || !opening);
   $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
   $('cashier-history-note').classList.toggle('hidden', !viewingHistory);
   $('cashier-opening-label-text').innerText = awaitingCount
-    ? `Admin counted opening cash (must match ${previousDate} closing amount)`
-    : 'Admin counted opening cash (Rs.)';
+    ? `Counted opening cash (Rs.; previous close was ${previousDate})`
+    : 'Counted opening cash (Rs.)';
+  updateCashierOpeningReason();
   $('cashier-entry-tbody').innerHTML = entries.length
     ? entries.map((entry) => `
       <tr>
@@ -431,6 +431,21 @@ function renderCashierDrawer() {
     : `<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
 }
 
+function updateCashierOpeningReason() {
+  if (!state || !$('cashier-opening-reason-container')) return;
+  const today = getTodayDate();
+  const previousDate = getPreviousDate(today);
+  const previousDay = getCashierDayTotals(previousDate);
+  const enteredAmount = $('cashier-opening-amount').value.trim();
+  const amount = Number(enteredAmount);
+  const differs = cashierSelectedDate === today && !state.cashierEntries.some((entry) =>
+    entry.date === today && entry.type === 'OPENING')
+    && !!previousDay.opening && enteredAmount !== '' && Number.isFinite(amount)
+    && Math.round(amount * 100) !== Math.round(previousDay.balance * 100);
+  $('cashier-opening-reason-container').classList.toggle('hidden', !differs);
+  $('cashier-opening-reason').required = differs;
+}
+
 function selectCashierDate() {
   const selectedDate = $('cashier-view-date').value;
   cashierSelectedDate = selectedDate && selectedDate <= getTodayDate()
@@ -442,17 +457,18 @@ async function addCashierEntry(type) {
   if (cashierSelectedDate !== getTodayDate()) {
     return showToast('Historical cashier balances are read-only. Select today to record cash.', 'error');
   }
-  if (type === 'OPENING' && currentUser?.role !== 'admin') {
-    return showToast('Only an admin can count and confirm opening cash.', 'error');
-  }
   const amountInput = type === 'OPENING' ? $('cashier-opening-amount') : $('cashier-withdrawal-amount');
   const amount = Number(amountInput.value);
   const takenBy = type === 'WITHDRAWAL' ? $('cashier-taken-by').value.trim() : '';
-  const note = type === 'WITHDRAWAL' ? $('cashier-withdrawal-note').value.trim() : '';
+  const note = type === 'OPENING' ? $('cashier-opening-reason').value.trim()
+    : $('cashier-withdrawal-note').value.trim();
   if (!Number.isFinite(amount) || amount < 0 || (type === 'WITHDRAWAL' && amount === 0)) {
     return showToast(type === 'OPENING' ? 'Enter a valid opening amount (zero or more).' : 'Enter an amount greater than zero.', 'error');
   }
   if (type === 'WITHDRAWAL' && !takenBy) return showToast('Enter the name of the person taking the cash.', 'error');
+  if (type === 'OPENING' && $('cashier-opening-reason').required && !note) {
+    return showToast('Enter a reason for the difference from yesterday’s closing cash.', 'error');
+  }
 
   const button = type === 'OPENING' ? $('cashier-opening-button') : $('cashier-withdrawal-button');
   button.disabled = true;
@@ -460,9 +476,12 @@ async function addCashierEntry(type) {
     const result = await Api.addCashierEntry({ type, amount, date: getTodayDate(), takenBy, note });
     state.cashierEntries.unshift(result.entry);
     amountInput.value = '';
+    if (type === 'OPENING') $('cashier-opening-reason').value = '';
     if (type === 'WITHDRAWAL') {
       $('cashier-taken-by').value = '';
       $('cashier-withdrawal-note').value = '';
+    } else {
+      $('cashier-opening-reason').value = '';
     }
     renderAll();
     showToast(type === 'OPENING' ? 'Today’s counted opening cash was confirmed.' : 'Cash withdrawal recorded and deducted from the cashier balance.', 'success');

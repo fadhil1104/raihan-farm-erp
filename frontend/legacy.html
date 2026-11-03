@@ -1037,7 +1037,7 @@
           </div>
           <div id="cashier-previous-close-panel" class="hidden rounded-lg border border-sky-500/30 bg-sky-950/30 p-3 text-xs text-sky-200">
             <strong>Previous day closing amount — <span id="cashier-previous-date"></span>:</strong>
-            <span id="cashier-previous-close"></span>. Admin must count this amount and confirm today’s opening cash before today’s cashier balance starts.
+            <span id="cashier-previous-close"></span>. Count the cash and confirm today’s opening balance. If it differs, provide a reason.
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Opening Cash</span><strong id="cashier-opening-balance" class="text-sm text-white">Not entered</strong></div>
@@ -1045,12 +1045,15 @@
             <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Cash Withdrawn</span><strong id="cashier-withdrawals" class="text-sm text-red-400">Rs. 0</strong></div>
           </div>
           <form id="cashier-opening-form" class="hidden grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end" onsubmit="event.preventDefault(); setDailyCashOpening()">
-            <label class="text-xs text-slate-400 font-semibold"><span id="cashier-opening-label-text">Admin counted opening cash (Rs.)</span>
-              <input id="cashier-opening-amount" type="number" min="0" step="0.01" required class="mt-1 w-full px-3 py-2 rounded-lg text-sm" placeholder="Counted amount">
+            <label class="text-xs text-slate-400 font-semibold"><span id="cashier-opening-label-text">Counted opening cash (Rs.)</span>
+              <input id="cashier-opening-amount" type="number" min="0" step="0.01" required oninput="updateCashierOpeningReason()" class="mt-1 w-full px-3 py-2 rounded-lg text-sm" placeholder="Counted amount">
             </label>
             <button id="cashier-opening-button" type="submit" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wide">Confirm Opening Cash</button>
+            <label id="cashier-opening-reason-container" class="hidden sm:col-span-2 text-xs text-amber-300 font-semibold">Reason for difference
+              <input id="cashier-opening-reason" type="text" maxlength="500" class="mt-1 w-full px-3 py-2 rounded-lg text-sm text-white" placeholder="Explain why the counted cash differs">
+            </label>
           </form>
-          <p id="cashier-admin-required" class="hidden text-xs text-amber-300">An admin must count and confirm today’s opening cash.</p>
+          <p id="cashier-admin-required" class="hidden text-xs text-amber-300">A cashier or admin must count and confirm today’s opening cash.</p>
           <p id="cashier-opening-note" class="hidden text-xs text-emerald-300">Today’s opening cash is confirmed. Cash withdrawals can now be recorded.</p>
           <p id="cashier-history-note" class="hidden text-xs text-sky-300">Historical view — cashier records are read-only.</p>
           <form id="cashier-withdrawal-form" class="hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end" onsubmit="event.preventDefault(); recordCashWithdrawal()">
