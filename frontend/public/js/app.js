@@ -2151,7 +2151,7 @@ function renderPosCart() {
       </div>`).join('');
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
   const totalKg = posCart.filter((c) => c.unitType === 'kg').reduce((s, c) => s + c.quantity, 0);
-  const discount = Number($('pos-discount').value) || 0;
+  const discount = calculatePosDiscount(subtotal);
   const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
   const grandTotal = Math.max(0, subtotal - discount) + deliveryFee;
   $('pos-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
@@ -2160,6 +2160,15 @@ function renderPosCart() {
   $('pos-grand-total').innerText = `Rs. ${grandTotal.toLocaleString()}`;
   updatePosCashSummary();
   updatePosLoyaltySummary();
+}
+
+function calculatePosDiscount(subtotal) {
+  const input = $('pos-discount');
+  const percentage = Math.min(100, Math.max(0, Number(input.value) || 0));
+  input.value = percentage;
+  const discount = subtotal * percentage / 100;
+  $('pos-discount-amount').innerText = `Rs. ${discount.toLocaleString()}`;
+  return discount;
 }
 
 function updatePosCashPayment() {
@@ -2172,7 +2181,7 @@ function updatePosCashPayment() {
 function updatePosCashSummary() {
   if (!$('pos-pay-method') || $('pos-pay-method').value !== 'CASH') return;
   const subtotal = posCart.reduce((sum, item) => sum + item.lineTotal, 0);
-  const discount = Math.max(0, Number($('pos-discount').value) || 0);
+  const discount = calculatePosDiscount(subtotal);
   const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
   const total = Math.max(0, subtotal - discount) + deliveryFee;
   const enteredAmount = $('pos-cash-received').value.trim();
@@ -2327,8 +2336,8 @@ function completePosSale() {
   const enteredName = $('pos-cust-name').value.trim();
   const customer = customerRecord ? customerRecord.name : (enteredName || (customerPhoneKey ? 'Loyalty Customer' : 'Walk-in Customer'));
   const payment = $('pos-pay-method').value;
-  const discount = Math.max(0, Number($('pos-discount').value) || 0);
   const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
+  const discount = calculatePosDiscount(subtotal);
   const delivery = isPosDelivery();
   const deliveryFeeInput = $('pos-delivery-fee').value.trim();
   const deliveryFeeRs = delivery ? Number(deliveryFeeInput) : 0;
