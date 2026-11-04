@@ -142,15 +142,20 @@ function renderPosSalesHistory() {
   const sales = getPosIncomeSales();
 
   let cashIncome = 0;
+  let extraCashIncome = 0;
   let cardIncome = 0;
   sales.forEach((sale) => {
     const payment = String(sale.payment || '').toUpperCase();
-    if (payment === 'CASH') cashIncome += Number(sale.totalRs) || 0;
+    if (payment === 'CASH') {
+      cashIncome += Number(sale.totalRs) || 0;
+      extraCashIncome += Number(sale.extraCashKeptRs) || 0;
+    }
     else if (payment === 'CARD' || payment === 'QR / TRANSFER') cardIncome += Number(sale.totalRs) || 0;
   });
   $('pos-income-cash').innerText = `Rs. ${cashIncome.toLocaleString()}`;
+  $('pos-income-extra-cash').innerText = `Rs. ${extraCashIncome.toLocaleString()}`;
   $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
-  $('pos-income-total').innerText = `Rs. ${(cashIncome + cardIncome).toLocaleString()}`;
+  $('pos-income-total').innerText = `Rs. ${(cashIncome + extraCashIncome + cardIncome).toLocaleString()}`;
 
   const canManageSales = currentUser?.role === 'admin';
   const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
@@ -169,7 +174,7 @@ function renderPosSalesHistory() {
       <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
       <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
-      <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}</td>
+      <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}${Number(p.extraCashKeptRs) > 0 ? `<span class="mt-1 block text-xs font-semibold text-emerald-300">Extra cash kept: Rs. ${Number(p.extraCashKeptRs).toLocaleString()} · ${esc(p.extraCashReason || 'No reason provided')}</span>` : ''}</td>
       ${canManageSales ? `<td data-label="Actions" class="text-right whitespace-nowrap">
         <button type="button" onclick="editPosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
         <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button></td>` : ''}
@@ -194,6 +199,10 @@ function editPosSale(saleId) {
   $('pos-edit-total').value = Number(sale.totalRs || 0);
   $('pos-edit-cash-received').value = Number(sale.cashReceivedRs ?? sale.totalRs ?? 0);
   $('pos-edit-change').value = Number(sale.changeRs || 0);
+  $('pos-edit-extra-cash-kept').value = Number(sale.extraCashKeptRs || 0);
+  $('pos-edit-extra-cash-reason').value = sale.extraCashReason || '';
+  $('pos-edit-extra-cash-fields').classList.toggle('hidden', sale.payment !== 'CASH');
+  $('pos-edit-extra-cash-reason-field').classList.toggle('hidden', sale.payment !== 'CASH');
   $('pos-edit-delivery').checked = Boolean(sale.delivery);
   $('pos-edit-delivery-fee').value = Number(sale.deliveryFeeRs || 0);
   $('pos-edit-items').innerHTML = '';
@@ -233,11 +242,16 @@ function closePosSaleEdit() {
 
 function updatePosSaleEditPayment() {
   const isCash = $('pos-edit-payment').value === 'CASH';
+  $('pos-edit-extra-cash-fields').classList.toggle('hidden', !isCash);
+  $('pos-edit-extra-cash-reason-field').classList.toggle('hidden', !isCash);
   if (!isCash) {
     $('pos-edit-cash-received').value = 0;
     $('pos-edit-change').value = 0;
+    $('pos-edit-extra-cash-kept').value = 0;
+    $('pos-edit-extra-cash-reason').value = '';
   } else {
-    $('pos-edit-cash-received').value = $('pos-edit-total').value || 0;
+    const extraCash = Number($('pos-edit-extra-cash-kept').value || 0);
+    $('pos-edit-cash-received').value = Number($('pos-edit-total').value || 0) + extraCash;
     $('pos-edit-change').value = 0;
   }
 }
@@ -292,6 +306,8 @@ async function savePosSaleEdit() {
     totalRs: Number($('pos-edit-total').value),
     cashReceivedRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-cash-received').value || 0) : 0,
     changeRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-change').value || 0) : 0,
+    extraCashKeptRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-extra-cash-kept').value || 0) : 0,
+    extraCashReason: $('pos-edit-payment').value === 'CASH' ? $('pos-edit-extra-cash-reason').value.trim() : '',
     delivery: $('pos-edit-delivery').checked,
     deliveryFeeRs: Number($('pos-edit-delivery-fee').value || 0),
     itemsDetails,
@@ -363,16 +379,19 @@ function getNextDate(date) {
 function getCashierDayTotals(date) {
   const entries = state.cashierEntries.filter((entry) => entry.date === date);
   const opening = entries.find((entry) => entry.type === 'OPENING');
-  const cashSales = (state.posSales || []).filter((sale) => sale.date === date && sale.payment === 'CASH')
+  const dayCashSales = (state.posSales || []).filter((sale) => sale.date === date && sale.payment === 'CASH');
+  const extraCashKept = dayCashSales
+    .reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0);
+  const cashSales = dayCashSales
     .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
   const withdrawn = entries.filter((entry) => entry.type === 'WITHDRAWAL')
     .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-  const balance = Number(opening?.amount || 0) + cashSales - withdrawn;
+  const balance = Number(opening?.amount || 0) + cashSales + extraCashKept - withdrawn;
   const confirmedClose = state.cashierEntries.find((entry) =>
     entry.date === getNextDate(date) && entry.type === 'OPENING' && entry.previousDate === date
       && Number.isFinite(Number(entry.previousClosingAmount)));
   return {
-    entries, opening, cashSales, withdrawn, balance,
+    entries, opening, cashSales, extraCashKept, withdrawn, balance,
     closingBalance: confirmedClose ? Number(confirmedClose.previousClosingAmount) : balance,
     closingConfirmed: !!confirmedClose
   };
@@ -389,7 +408,7 @@ function renderCashierDrawer() {
   if (cashierSelectedDate > today) cashierSelectedDate = today;
   const selectedDate = cashierSelectedDate;
   const viewingHistory = selectedDate !== today;
-  const { entries, opening, cashSales, withdrawn, balance, closingBalance, closingConfirmed } = getCashierDayTotals(selectedDate);
+  const { entries, opening, cashSales, extraCashKept, withdrawn, balance, closingBalance, closingConfirmed } = getCashierDayTotals(selectedDate);
   const previousDate = getPreviousDate(today);
   const previousDay = getCashierDayTotals(previousDate);
   const awaitingCount = !viewingHistory && !opening && !!previousDay.opening;
@@ -399,6 +418,7 @@ function renderCashierDrawer() {
   $('cashier-date-label').innerText = selectedDate;
   $('cashier-opening-balance').innerText = opening ? `Rs. ${Number(opening.amount).toLocaleString()}` : 'Not entered';
   $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
+  $('cashier-extra-cash-kept').innerText = `Rs. ${extraCashKept.toLocaleString()}`;
   $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
   $('cashier-balance-label').innerText = awaitingCount ? 'Previous Close Awaiting Confirmation'
     : viewingHistory ? (closingConfirmed ? 'Closing Cash (Confirmed)' : 'Expected Closing Cash')
@@ -504,6 +524,9 @@ function printPosDetailed() {
 function printPosSummary() {
   const sales = getPosIncomeSales();
   const productGroups = new Map();
+  const cashSales = sales.filter((sale) => sale.payment === 'CASH');
+  const extraCashSales = cashSales.filter((sale) => Number(sale.extraCashKeptRs) > 0);
+  const extraCashTotal = extraCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0);
   sales.forEach((sale) => {
     const phone = phoneKey(sale.customerPhone);
     const loyalty = phone.length >= 7 && (state.customers || [])
@@ -534,6 +557,11 @@ function printPosSummary() {
     }
   });
   $('pos-summary-print-area').innerHTML = `
+    <h2>Income and Extra Cash Summary</h2>
+    <table><thead><tr><th>Receipt</th><th>Customer</th><th>Extra cash kept</th><th>Reason</th></tr></thead><tbody>${extraCashSales.map((sale) =>
+      `<tr><td>${esc(sale.id)}</td><td>${esc(sale.customer || 'Walk-in Customer')}</td><td>Rs. ${Number(sale.extraCashKeptRs).toLocaleString()}</td><td>${esc(sale.extraCashReason || 'No reason provided')}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="text-center">No extra cash was kept in this period.</td></tr>'}</tbody>
+    <tfoot><tr><th colspan="2">Total extra cash kept</th><th colspan="2">Rs. ${extraCashTotal.toLocaleString()}</th></tr></tfoot></table>
     <table><thead><tr><th>Product</th><th>Walk-in Customer Quantity</th><th>Loyalty Customer Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
       `<tr><td>${esc(product.name)}</td><td>${product.walkInQuantity ? `${product.walkInQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>${product.loyaltyQuantity ? `${product.loyaltyQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>Rs. ${product.total.toLocaleString()}</td></tr>`
     ).join('') || '<tr><td colspan="4" class="text-center">No product sales in this period.</td></tr>'}</tbody>
@@ -823,7 +851,8 @@ async function closeShopAndLogout() {
   selectedPosCategoryId = null;
   showAllPosProducts = false;
   ['pos-product-search', 'pos-weight-input', 'pos-quantity-input', 'pos-cust-phone',
-    'pos-cust-name', 'pos-cash-received'].forEach((id) => { if ($(id)) $(id).value = ''; });
+    'pos-cust-name', 'pos-cash-received', 'pos-extra-cash-kept', 'pos-extra-cash-reason']
+    .forEach((id) => { if ($(id)) $(id).value = ''; });
   $('pos-discount').value = '0';
   $('pos-discount-type').value = 'percentage';
   $('pos-delivery-fee').value = '';
@@ -2141,6 +2170,9 @@ function clearPosCart() {
   posCart = [];
   $('pos-discount').value = 0;
   $('pos-discount-type').value = 'percentage';
+  $('pos-cash-received').value = '';
+  $('pos-extra-cash-kept').value = '';
+  $('pos-extra-cash-reason').value = '';
   $('pos-delivery-fee').value = '';
   document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
   onPosFulfilmentChanged();
@@ -2214,6 +2246,10 @@ function updatePosCashPayment() {
   const cashPayment = $('pos-pay-method').value === 'CASH';
   $('pos-cash-payment').classList.toggle('hidden', !cashPayment);
   $('pos-change-summary').classList.toggle('hidden', !cashPayment);
+  if (!cashPayment) {
+    $('pos-extra-cash-kept').value = '';
+    $('pos-extra-cash-reason').value = '';
+  }
   updatePosCashSummary();
 }
 
@@ -2223,13 +2259,19 @@ function updatePosCashSummary() {
   const discount = calculatePosDiscount(subtotal);
   const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
   const total = Math.max(0, subtotal - discount) + deliveryFee;
+  const extraCashInput = $('pos-extra-cash-kept').value.trim();
+  const extraCashKept = extraCashInput === '' ? 0 : Number(extraCashInput);
+  $('pos-extra-cash-reason').required = Number.isFinite(extraCashKept) && extraCashKept > 0;
+  $('pos-extra-cash-reason-required').classList.toggle('hidden', !$('pos-extra-cash-reason').required);
   const enteredAmount = $('pos-cash-received').value.trim();
-  const cashReceived = enteredAmount === '' ? total : Number(enteredAmount);
+  const cashReceived = enteredAmount === '' ? total + (Number.isFinite(extraCashKept) ? extraCashKept : 0) : Number(enteredAmount);
   const changeAmount = $('pos-change-amount');
   const changeLabel = $('pos-change-label');
 
-  if (!Number.isFinite(cashReceived) || cashReceived < total) {
-    const remaining = Math.max(0, total - (Number.isFinite(cashReceived) ? cashReceived : 0));
+  if (!Number.isFinite(extraCashKept) || extraCashKept < 0 ||
+      !Number.isFinite(cashReceived) || cashReceived < total + extraCashKept) {
+    const remaining = Math.max(0, total + (Number.isFinite(extraCashKept) ? extraCashKept : 0) -
+      (Number.isFinite(cashReceived) ? cashReceived : 0));
     changeLabel.innerText = 'Remaining cash due';
     changeAmount.innerText = `Rs. ${remaining.toLocaleString()}`;
     changeAmount.classList.remove('text-emerald-300');
@@ -2237,8 +2279,8 @@ function updatePosCashSummary() {
     return;
   }
 
-  changeLabel.innerText = 'Balance to return';
-  changeAmount.innerText = `Rs. ${(cashReceived - total).toLocaleString()}`;
+  changeLabel.innerText = extraCashKept > 0 ? 'Balance to return after extra cash kept' : 'Balance to return';
+  changeAmount.innerText = `Rs. ${(cashReceived - total - extraCashKept).toLocaleString()}`;
   changeAmount.classList.remove('text-amber-300');
   changeAmount.classList.add('text-emerald-300');
 }
@@ -2384,14 +2426,23 @@ function completePosSale() {
     return showToast('Enter a valid whole-number delivery fee in rupees.', 'error');
   }
   const grandTotal = Math.max(0, subtotal - discount) + deliveryFeeRs;
+  const extraCashInput = $('pos-extra-cash-kept').value.trim();
+  const extraCashKeptRs = payment === 'CASH' && extraCashInput !== '' ? Number(extraCashInput) : 0;
+  const extraCashReason = payment === 'CASH' ? $('pos-extra-cash-reason').value.trim() : '';
+  if (!Number.isFinite(extraCashKeptRs) || extraCashKeptRs < 0) {
+    return showToast('Enter a valid non-negative extra cash amount.', 'error');
+  }
+  if (extraCashKeptRs > 0 && !extraCashReason) {
+    return showToast('Enter a reason for keeping extra cash.', 'error');
+  }
   const cashReceivedInput = $('pos-cash-received').value.trim();
   const cashReceivedRs = payment !== 'CASH'
     ? 0
-    : cashReceivedInput === '' ? grandTotal : Number(cashReceivedInput);
-  if (payment === 'CASH' && (!Number.isFinite(cashReceivedRs) || cashReceivedRs < grandTotal)) {
-    return showToast(`Enter at least Rs. ${grandTotal.toLocaleString()} received from the customer.`, 'error');
+    : cashReceivedInput === '' ? grandTotal + extraCashKeptRs : Number(cashReceivedInput);
+  if (payment === 'CASH' && (!Number.isFinite(cashReceivedRs) || cashReceivedRs < grandTotal + extraCashKeptRs)) {
+    return showToast(`Enter at least Rs. ${(grandTotal + extraCashKeptRs).toLocaleString()} received from the customer.`, 'error');
   }
-  const changeRs = payment === 'CASH' ? cashReceivedRs - grandTotal : 0;
+  const changeRs = payment === 'CASH' ? cashReceivedRs - grandTotal - extraCashKeptRs : 0;
   const receiptId = 'POS-' + Date.now().toString().slice(-7);
   const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -2436,6 +2487,7 @@ function completePosSale() {
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
     totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
     payment, subtotal, discount, delivery, deliveryFeeRs, totalRs: grandTotal, cashReceivedRs, changeRs,
+    extraCashKeptRs, extraCashReason,
     discountType: $('pos-discount-type').value,
     discountValue: Math.max(0, Number($('pos-discount').value) || 0),
     loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
@@ -2466,6 +2518,8 @@ function renderPosSaleReceipt(sale) {
   $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
   $('rc-delivery-fee-row').classList.toggle('hidden', !sale.delivery);
   $('rc-delivery-fee').innerText = `Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}`;
+  $('rc-extra-cash-kept-row').classList.toggle('hidden', Number(sale.extraCashKeptRs || 0) <= 0);
+  $('rc-extra-cash-kept').innerText = `Rs. ${Number(sale.extraCashKeptRs || 0).toLocaleString()}`;
   $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
   const cashPayment = sale.payment === 'CASH';
   $('rc-cash-paid-row').classList.toggle('hidden', !cashPayment);
@@ -2535,6 +2589,7 @@ function confirmPosSale() {
     discountType: sale.discountType, discountValue: sale.discountValue, totalRs: sale.totalRs,
     delivery: sale.delivery, deliveryFeeRs: sale.deliveryFeeRs,
     cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
+    extraCashKeptRs: sale.extraCashKeptRs, extraCashReason: sale.extraCashReason,
     loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
   });
@@ -2551,6 +2606,8 @@ function confirmPosSale() {
   $('pos-cust-phone').value = '';
   $('pos-cust-name').value = '';
   $('pos-cash-received').value = '';
+  $('pos-extra-cash-kept').value = '';
+  $('pos-extra-cash-reason').value = '';
   $('pos-delivery-fee').value = '';
   document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
   onPosFulfilmentChanged();

@@ -562,18 +562,24 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!customer || customer.length > 160 || customerPhone.length > 40 || !validPayments.includes(payment)) {
     return res.status(400).json({ error: 'Enter a valid customer, phone number, and payment method.' });
   }
+  const extraCashKeptRs = body.extraCashKeptRs === undefined ? 0 : body.extraCashKeptRs;
+  const extraCashReason = String(body.extraCashReason || '').trim();
   const numericFields = ['subtotal', 'discount', 'totalRs', 'cashReceivedRs', 'changeRs', 'deliveryFeeRs'];
   if (numericFields.some((field) => typeof body[field] !== 'number' || !Number.isFinite(body[field]) || body[field] < 0)) {
     return res.status(400).json({ error: 'Sale amounts must be valid non-negative numbers.' });
   }
+  if (typeof extraCashKeptRs !== 'number' || !Number.isFinite(extraCashKeptRs) || extraCashKeptRs < 0 ||
+      extraCashReason.length > 500 || (extraCashKeptRs > 0 && !extraCashReason)) {
+    return res.status(400).json({ error: 'Enter a valid extra cash amount and a reason when extra cash is kept.' });
+  }
   if (typeof body.delivery !== 'boolean') {
     return res.status(400).json({ error: 'Select whether this sale used delivery.' });
   }
-  if (payment === 'CASH' && Math.abs(body.cashReceivedRs - body.totalRs - body.changeRs) > 0.01) {
-    return res.status(400).json({ error: 'Cash received must equal the sale total plus the change returned.' });
+  if (payment === 'CASH' && Math.abs(body.cashReceivedRs - body.totalRs - body.changeRs - extraCashKeptRs) > 0.01) {
+    return res.status(400).json({ error: 'Cash received must equal the sale total, extra cash kept, and change returned.' });
   }
-  if (payment !== 'CASH' && (body.cashReceivedRs !== 0 || body.changeRs !== 0)) {
-    return res.status(400).json({ error: 'Cash received and change must be zero for non-cash payments.' });
+  if (payment !== 'CASH' && (body.cashReceivedRs !== 0 || body.changeRs !== 0 || extraCashKeptRs !== 0 || extraCashReason)) {
+    return res.status(400).json({ error: 'Cash received, change, and extra cash kept must be zero for non-cash payments.' });
   }
   if (!Array.isArray(body.itemsDetails) || body.itemsDetails.length < 1 || body.itemsDetails.length > 100) {
     return res.status(400).json({ error: 'A sale must contain between 1 and 100 items.' });
@@ -630,6 +636,8 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
     totalRs: body.totalRs,
     cashReceivedRs: payment === 'CASH' ? body.cashReceivedRs : 0,
     changeRs: payment === 'CASH' ? body.changeRs : 0,
+    extraCashKeptRs: payment === 'CASH' ? extraCashKeptRs : 0,
+    extraCashReason: payment === 'CASH' ? extraCashReason : '',
     delivery: body.delivery,
     deliveryFeeRs: body.delivery ? body.deliveryFeeRs : 0,
     itemsDetails,
@@ -703,7 +711,9 @@ router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, re
         cashReceivedRs: payment === 'CASH'
           ? sale.payment === 'CASH' ? Number(sale.cashReceivedRs ?? sale.totalRs ?? 0) : Number(sale.totalRs || 0)
           : 0,
-        changeRs: payment === 'CASH' && sale.payment === 'CASH' ? Number(sale.changeRs || 0) : 0
+        changeRs: payment === 'CASH' && sale.payment === 'CASH' ? Number(sale.changeRs || 0) : 0,
+        extraCashKeptRs: payment === 'CASH' && sale.payment === 'CASH' ? Number(sale.extraCashKeptRs || 0) : 0,
+        extraCashReason: payment === 'CASH' && sale.payment === 'CASH' ? String(sale.extraCashReason || '') : ''
       }
     },
     { new: true, runValidators: true }
@@ -739,6 +749,8 @@ router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, re
       vaultSale.payment = updatedSale.payment;
       vaultSale.cashReceivedRs = updatedSale.cashReceivedRs;
       vaultSale.changeRs = updatedSale.changeRs;
+      vaultSale.extraCashKeptRs = updatedSale.extraCashKeptRs;
+      vaultSale.extraCashReason = updatedSale.extraCashReason;
       await vault.save();
     }
   }

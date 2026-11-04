@@ -282,6 +282,7 @@
           <div class="flex justify-between text-slate-600"><span>Discount:</span><span id="rc-discount">- Rs. 0</span></div>
           <div id="rc-delivery-fee-row" class="hidden flex justify-between text-slate-600"><span>Delivery fee:</span><span id="rc-delivery-fee">Rs. 0</span></div>
           <div class="flex justify-between font-black text-sm pt-1 border-t border-slate-300"><span>BILL TOTAL:</span><span id="rc-total">Rs. 0</span></div>
+          <div id="rc-extra-cash-kept-row" class="hidden flex justify-between text-slate-600"><span>Extra cash kept:</span><span id="rc-extra-cash-kept">Rs. 0</span></div>
           <div id="rc-cash-paid-row" class="hidden flex justify-between"><span>Customer paid:</span><span id="rc-cash-paid">Rs. 0</span></div>
           <div id="rc-cash-change-row" class="hidden flex justify-between font-bold"><span>Balance returned:</span><span id="rc-cash-change">Rs. 0</span></div>
           <div class="border-t border-dashed border-slate-300 pt-2 text-[10px]"><p class="font-bold">LOYALTY: <span id="rc-loyalty"></span></p><p id="rc-loyalty-giveaway" class="mt-1"></p></div>
@@ -958,6 +959,14 @@
               <div id="pos-cash-payment" class="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3">
                 <label for="pos-cash-received" class="block text-xs font-bold text-emerald-200">Cash received from customer (Rs., optional)</label>
                 <input type="number" id="pos-cash-received" min="0" step="1" inputmode="numeric" oninput="updatePosCashSummary()" placeholder="Optional; defaults to bill total" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+                <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label for="pos-extra-cash-kept" class="text-xs font-bold text-emerald-200">Extra cash kept (Rs., optional)
+                    <input type="number" id="pos-extra-cash-kept" min="0" step="0.01" inputmode="decimal" oninput="updatePosCashSummary()" placeholder="0" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+                  </label>
+                  <label for="pos-extra-cash-reason" class="text-xs font-bold text-emerald-200">Reason <span id="pos-extra-cash-reason-required" class="hidden">*</span>
+                    <input type="text" id="pos-extra-cash-reason" maxlength="500" placeholder="Required when extra cash is kept" class="mt-1 w-full px-3 py-2 rounded-lg text-sm font-bold">
+                  </label>
+                </div>
               </div>
               <div id="pos-customer-status" class="min-h-4 text-[11px] text-slate-400 mb-2" aria-live="polite"></div>
               <div id="pos-loyalty-summary" class="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-950/30 px-3 py-2 text-[11px] text-emerald-200" aria-live="polite"></div>
@@ -1016,10 +1025,14 @@
             </label>
           </div>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
             <span class="text-[10px] uppercase font-bold text-slate-400 block">Cash Income</span>
             <strong id="pos-income-cash" class="text-lg font-black text-emerald-400">Rs. 0</strong>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+            <span class="text-[10px] uppercase font-bold text-slate-400 block">Extra Cash Kept</span>
+            <strong id="pos-income-extra-cash" class="text-lg font-black text-emerald-400">Rs. 0</strong>
           </div>
           <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
             <span class="text-[10px] uppercase font-bold text-slate-400 block">Card / QR / Transfer Income</span>
@@ -1034,7 +1047,7 @@
           <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h4 id="cashier-summary-title" class="font-bold text-sm text-white">Cash in Cashier <span class="text-yellow-400" id="cashier-date-label"></span></h4>
-              <p class="text-xs text-slate-400">Opening cash + cash sales − recorded withdrawals. Daily records are kept for history.</p>
+              <p class="text-xs text-slate-400">Opening cash + cash sales and extra cash kept − recorded withdrawals. Daily records are kept for history.</p>
             </div>
             <label class="text-xs font-semibold text-slate-400">View cashier history by date
               <input id="cashier-view-date" type="date" onchange="selectCashierDate()" class="mt-1 block rounded-lg px-3 py-2 text-sm text-white">
@@ -1048,9 +1061,10 @@
             <strong>Previous day closing amount — <span id="cashier-previous-date"></span>:</strong>
             <span id="cashier-previous-close"></span>. Count the cash and confirm today’s opening balance. If it differs, provide a reason.
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Opening Cash</span><strong id="cashier-opening-balance" class="text-sm text-white">Not entered</strong></div>
             <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Cash Sales</span><strong id="cashier-cash-sales" class="text-sm text-emerald-400">Rs. 0</strong></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Extra Cash Kept</span><strong id="cashier-extra-cash-kept" class="text-sm text-emerald-400">Rs. 0</strong></div>
             <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3"><span class="block text-[10px] uppercase font-bold text-slate-400">Cash Withdrawn</span><strong id="cashier-withdrawals" class="text-sm text-red-400">Rs. 0</strong></div>
           </div>
           <form id="cashier-opening-form" class="hidden grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end" onsubmit="event.preventDefault(); setDailyCashOpening()">
@@ -1120,6 +1134,8 @@
             <label class="text-xs font-semibold text-slate-400">Sale total (Rs.)<input id="pos-edit-total" type="number" min="0" step="0.01" required class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
             <label class="text-xs font-semibold text-slate-400">Cash received (Rs.)<input id="pos-edit-cash-received" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
             <label class="text-xs font-semibold text-slate-400">Change (Rs.)<input id="pos-edit-change" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label id="pos-edit-extra-cash-fields" class="text-xs font-semibold text-slate-400">Extra cash kept (Rs.)<input id="pos-edit-extra-cash-kept" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
+            <label id="pos-edit-extra-cash-reason-field" class="text-xs font-semibold text-slate-400">Reason for extra cash<input id="pos-edit-extra-cash-reason" type="text" maxlength="500" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
             <label class="flex items-center gap-2 self-end rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300"><input id="pos-edit-delivery" type="checkbox" class="accent-yellow-400"> Delivery sale</label>
             <label class="text-xs font-semibold text-slate-400">Delivery fee (Rs.)<input id="pos-edit-delivery-fee" type="number" min="0" step="0.01" class="mt-1 w-full rounded-lg px-3 py-2 text-sm"></label>
           </div>
