@@ -440,7 +440,7 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
   const amount = Number(req.body?.amount);
   const takenBy = String(req.body?.takenBy || '').trim();
   const note = String(req.body?.note || '').trim();
-  if (!['OPENING', 'WITHDRAWAL'].includes(type)) {
+  if (!['OPENING', 'WITHDRAWAL', 'EXTRA_CASH'].includes(type)) {
     return res.status(400).json({ error: 'Choose a valid cashier entry type.' });
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -453,16 +453,19 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
   if (date !== todayStr()) {
     return res.status(409).json({ error: 'Cashier entries can only be recorded for the current shop date.' });
   }
-  if (!Number.isFinite(amount) || amount < 0 || (type === 'WITHDRAWAL' && amount === 0)) {
+  if (!Number.isFinite(amount) || amount < 0 || (type !== 'OPENING' && amount === 0)) {
     return res.status(400).json({ error: type === 'OPENING'
       ? 'Enter a valid opening amount (zero or more).'
-      : 'Enter a withdrawal amount greater than zero.' });
+      : type === 'EXTRA_CASH' ? 'Enter an extra cash amount greater than zero.' : 'Enter a withdrawal amount greater than zero.' });
   }
   if (note.length > 500) {
     return res.status(400).json({ error: 'The cashier note must be 500 characters or fewer.' });
   }
   if (type === 'WITHDRAWAL' && !takenBy) {
     return res.status(400).json({ error: 'Enter the name of the person taking the cash.' });
+  }
+  if (type === 'EXTRA_CASH' && !note) {
+    return res.status(400).json({ error: 'Enter a reason for the extra cash.' });
   }
 
   const dayEntries = await CashierEntry.find({ date }).lean();
@@ -481,14 +484,23 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     if (previousOpening) {
       const [previousCashSales] = await PosSale.aggregate([
         { $match: { date: previousDate, payment: 'CASH' } },
-        { $group: { _id: null, total: { $sum: '$totalRs' } } }
+        { $group: {
+          _id: null,
+          total: { $sum: '$totalRs' },
+          extraCash: { $sum: { $ifNull: ['$extraCashKeptRs', 0] } }
+        } }
       ]);
       const previousWithdrawals = previousEntries
         .filter((entry) => entry.type === 'WITHDRAWAL')
         .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      const previousManualExtraCash = previousEntries
+        .filter((entry) => entry.type === 'EXTRA_CASH')
+        .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
       previousClosingAmount = Math.round((
         Number(previousOpening.amount || 0)
         + Number(previousCashSales?.total || 0)
+        + Number(previousCashSales?.extraCash || 0)
+        + previousManualExtraCash
         - previousWithdrawals
       ) * 100) / 100;
       if (Math.round(amount * 100) !== Math.round(previousClosingAmount * 100)) {
@@ -506,10 +518,19 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     if (!opening) return res.status(409).json({ error: 'Record the day’s opening cash before recording a withdrawal.' });
     const [cashSales] = await PosSale.aggregate([
       { $match: { date, payment: 'CASH' } },
-      { $group: { _id: null, total: { $sum: '$totalRs' } } }
+      { $group: {
+        _id: null,
+        total: { $sum: '$totalRs' },
+        extraCash: { $sum: { $ifNull: ['$extraCashKeptRs', 0] } }
+      } }
     ]);
+    const manualExtraCash = dayEntries
+      .filter((entry) => entry.type === 'EXTRA_CASH')
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
     const available = Number(opening.amount || 0)
       + Number(cashSales?.total || 0)
+      + Number(cashSales?.extraCash || 0)
+      + manualExtraCash
       - dayEntries.filter((entry) => entry.type === 'WITHDRAWAL')
         .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
     if (amount > available) {
@@ -517,7 +538,7 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     }
   }
 
-  const id = type === 'OPENING' ? `opening-${date}` : `withdrawal-${randomUUID()}`;
+  const id = type === 'OPENING' ? `opening-${date}` : `${type.toLowerCase()}-${randomUUID()}`;
   const entry = {
     id,
     uid: id,
@@ -541,6 +562,31 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
     }
     throw err;
   }
+});
+
+router.put('/cashier-entries/:id', requireAuth, async (req, res) => {
+  const entry = await CashierEntry.findOne({ id: req.params.id });
+  if (!entry || entry.type !== 'EXTRA_CASH') {
+    return res.status(404).json({ error: 'Extra-cash entry not found.' });
+  }
+  if (entry.date !== todayStr() && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only an admin can edit historical extra-cash entries.' });
+  }
+  const amount = Number(req.body?.amount);
+  const note = String(req.body?.note || '').trim();
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Enter an extra cash amount greater than zero.' });
+  }
+  if (!note || note.length > 500) {
+    return res.status(400).json({ error: 'Enter a reason of 500 characters or fewer.' });
+  }
+  const updated = await CashierEntry.findOneAndUpdate(
+    { _id: entry._id, updatedAt: entry.updatedAt },
+    { $set: { amount: Math.round(amount * 100) / 100, note, recordedBy: String(req.user.label || req.user.username) } },
+    { new: true, runValidators: true }
+  );
+  if (!updated) return res.status(409).json({ error: 'Cashier entry changed while you were editing it. Refresh and try again.' });
+  res.json({ entry: clean(updated.toObject()) });
 });
 
 router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {

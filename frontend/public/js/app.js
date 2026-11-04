@@ -65,6 +65,7 @@ let posIncomeMonth = getTodayDate().slice(0, 7);
 let posIncomeYear = String(new Date().getFullYear());
 let cashierSelectedDate = getTodayDate();
 let cashierAutoTodayDate = getTodayDate();
+let editingCashierExtraEntryId = null;
 let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
 let selectedArchiveDate = getTodayDate();
 let archiveDateRange = null;
@@ -122,6 +123,22 @@ function getPosIncomeSales() {
   });
 }
 
+function getPosIncomeExtraCashEntries() {
+  if (!state) return [];
+  const now = Date.now();
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  return (state.cashierEntries || []).filter((entry) => {
+    if (entry.type !== 'EXTRA_CASH') return false;
+    const date = String(entry.date || '');
+    if (posIncomePeriod === 'DAY') return date === getTodayDate();
+    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
+    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
+    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
+    const timestamp = new Date(`${date}T00:00:00`).getTime();
+    return !Number.isNaN(timestamp) && timestamp <= now && timestamp >= now - windowMs;
+  });
+}
+
 function renderPosSalesHistory() {
   if (!state) return;
   const periodSelect = $('pos-income-period');
@@ -144,6 +161,7 @@ function renderPosSalesHistory() {
   let cashIncome = 0;
   let extraCashIncome = 0;
   let cardIncome = 0;
+  const extraCashEntries = getPosIncomeExtraCashEntries();
   sales.forEach((sale) => {
     const payment = String(sale.payment || '').toUpperCase();
     if (payment === 'CASH') {
@@ -152,6 +170,7 @@ function renderPosSalesHistory() {
     }
     else if (payment === 'CARD' || payment === 'QR / TRANSFER') cardIncome += Number(sale.totalRs) || 0;
   });
+  extraCashIncome += extraCashEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   $('pos-income-cash').innerText = `Rs. ${cashIncome.toLocaleString()}`;
   $('pos-income-extra-cash').innerText = `Rs. ${extraCashIncome.toLocaleString()}`;
   $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
@@ -250,9 +269,24 @@ function updatePosSaleEditPayment() {
     $('pos-edit-extra-cash-kept').value = 0;
     $('pos-edit-extra-cash-reason').value = '';
   } else {
-    const extraCash = Number($('pos-edit-extra-cash-kept').value || 0);
-    $('pos-edit-cash-received').value = Number($('pos-edit-total').value || 0) + extraCash;
-    $('pos-edit-change').value = 0;
+    updatePosSaleEditCashTotals('total');
+  }
+}
+
+function updatePosSaleEditCashTotals(changedField) {
+  if ($('pos-edit-payment').value !== 'CASH') return;
+  const total = Math.max(0, Number($('pos-edit-total').value) || 0);
+  const extraCash = Math.max(0, Number($('pos-edit-extra-cash-kept').value) || 0);
+  const required = total + extraCash;
+  if (changedField === 'change') {
+    const change = Math.max(0, Number($('pos-edit-change').value) || 0);
+    $('pos-edit-cash-received').value = required + change;
+  } else if (changedField === 'received') {
+    const received = Math.max(0, Number($('pos-edit-cash-received').value) || 0);
+    $('pos-edit-change').value = Math.max(0, received - required);
+  } else {
+    const change = Math.max(0, Number($('pos-edit-change').value) || 0);
+    $('pos-edit-cash-received').value = required + change;
   }
 }
 
@@ -295,6 +329,14 @@ async function savePosSaleEdit() {
   const itemsSummary = itemsDetails.map((item) =>
     `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`
   ).join(', ');
+  const extraCashKeptRs = $('pos-edit-payment').value === 'CASH'
+    ? Number($('pos-edit-extra-cash-kept').value || 0) : 0;
+  const extraCashReason = $('pos-edit-payment').value === 'CASH'
+    ? $('pos-edit-extra-cash-reason').value.trim() : '';
+  if (!Number.isFinite(extraCashKeptRs) || extraCashKeptRs < 0 ||
+      (extraCashKeptRs > 0 && !extraCashReason)) {
+    return showToast('Enter a valid extra cash amount and a reason when extra cash is kept.', 'error');
+  }
   const payload = {
     date: $('pos-edit-date').value,
     time: $('pos-edit-time').value.trim(),
@@ -306,8 +348,8 @@ async function savePosSaleEdit() {
     totalRs: Number($('pos-edit-total').value),
     cashReceivedRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-cash-received').value || 0) : 0,
     changeRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-change').value || 0) : 0,
-    extraCashKeptRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-extra-cash-kept').value || 0) : 0,
-    extraCashReason: $('pos-edit-payment').value === 'CASH' ? $('pos-edit-extra-cash-reason').value.trim() : '',
+    extraCashKeptRs,
+    extraCashReason,
     delivery: $('pos-edit-delivery').checked,
     deliveryFeeRs: Number($('pos-edit-delivery-fee').value || 0),
     itemsDetails,
@@ -380,8 +422,9 @@ function getCashierDayTotals(date) {
   const entries = state.cashierEntries.filter((entry) => entry.date === date);
   const opening = entries.find((entry) => entry.type === 'OPENING');
   const dayCashSales = (state.posSales || []).filter((sale) => sale.date === date && sale.payment === 'CASH');
-  const extraCashKept = dayCashSales
-    .reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0);
+  const extraCashKept = dayCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0)
+    + entries.filter((entry) => entry.type === 'EXTRA_CASH')
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const cashSales = dayCashSales
     .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
   const withdrawn = entries.filter((entry) => entry.type === 'WITHDRAWAL')
@@ -433,6 +476,7 @@ function renderCashierDrawer() {
   $('cashier-admin-required').classList.add('hidden');
   $('cashier-opening-note').classList.toggle('hidden', viewingHistory || !opening);
   $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-extra-cash-form').classList.toggle('hidden', viewingHistory || !opening);
   $('cashier-history-note').classList.toggle('hidden', !viewingHistory);
   $('cashier-opening-label-text').innerText = awaitingCount
     ? `Counted opening cash (Rs.; previous close was ${previousDate})`
@@ -442,13 +486,16 @@ function renderCashierDrawer() {
     ? entries.map((entry) => `
       <tr>
         <td class="py-2 px-3">${esc(entry.time || '')}</td>
-        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Opening cash confirmed' : 'Cash taken out'}</td>
+        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Opening cash confirmed' : entry.type === 'EXTRA_CASH' ? 'Extra cash recorded' : 'Cash taken out'}</td>
         <td class="py-2 px-3">${esc(entry.takenBy || '—')}</td>
         <td class="py-2 px-3">${esc(entry.recordedBy || '—')}</td>
         <td class="py-2 px-3 text-right font-bold">${entry.type === 'WITHDRAWAL' ? '−' : ''} Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
         <td class="py-2 px-3">${esc(entry.note || (entry.type === 'OPENING' && entry.previousDate ? `Confirmed previous close for ${entry.previousDate}` : '—'))}</td>
+        <td class="py-2 px-3 text-right">${entry.type === 'EXTRA_CASH' && (selectedDate === today || currentUser?.role === 'admin')
+          ? `<button type="button" onclick="editCashierExtraCashEntry(${esc(JSON.stringify(String(entry.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-[10px] font-bold text-yellow-300 hover:bg-yellow-400 hover:text-slate-950">Edit</button>`
+          : '—'}</td>
       </tr>`).join('')
-    : `<tr><td colspan="6" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
+    : `<tr><td colspan="7" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
 }
 
 function updateCashierOpeningReason() {
@@ -515,6 +562,72 @@ async function addCashierEntry(type) {
 function setDailyCashOpening() { return addCashierEntry('OPENING'); }
 function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
 
+async function recordCashierExtraCash() {
+  if (cashierSelectedDate !== getTodayDate()) {
+    return showToast('Historical cashier balances are read-only. Select today to record extra cash.', 'error');
+  }
+  const amount = Number($('cashier-extra-cash-amount').value);
+  const note = $('cashier-extra-cash-note').value.trim();
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an extra cash amount greater than zero.', 'error');
+  if (!note) return showToast('Enter a reason or source for the extra cash.', 'error');
+  const button = $('cashier-extra-cash-form').querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await Api.addCashierEntry({ type: 'EXTRA_CASH', amount, date: getTodayDate(), note });
+    state.cashierEntries.unshift(result.entry);
+    $('cashier-extra-cash-amount').value = '';
+    $('cashier-extra-cash-note').value = '';
+    renderAll();
+    showToast('Extra cash recorded and added to the cashier balance.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function editCashierExtraCashEntry(entryId) {
+  const entry = (state?.cashierEntries || []).find((item) =>
+    String(item.id) === String(entryId) && item.type === 'EXTRA_CASH');
+  if (!entry) return showToast('Extra-cash entry not found. Refresh the cashier history and try again.', 'error');
+  if (entry.date !== getTodayDate() && currentUser?.role !== 'admin') {
+    return showToast('Only an admin can edit historical extra-cash entries.', 'error');
+  }
+  editingCashierExtraEntryId = String(entryId);
+  $('cashier-extra-cash-edit-amount').value = Number(entry.amount || 0);
+  $('cashier-extra-cash-edit-note').value = entry.note || '';
+  $('cashier-extra-cash-edit-modal').classList.remove('hidden');
+  $('cashier-extra-cash-edit-modal').classList.add('flex');
+}
+
+function closeCashierExtraCashEdit() {
+  editingCashierExtraEntryId = null;
+  $('cashier-extra-cash-edit-modal').classList.add('hidden');
+  $('cashier-extra-cash-edit-modal').classList.remove('flex');
+}
+
+async function saveCashierExtraCashEdit() {
+  if (!editingCashierExtraEntryId) return;
+  const amount = Number($('cashier-extra-cash-edit-amount').value);
+  const note = $('cashier-extra-cash-edit-note').value.trim();
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an extra cash amount greater than zero.', 'error');
+  if (!note) return showToast('Enter a reason or source for the extra cash.', 'error');
+  const button = $('cashier-extra-cash-edit-save');
+  button.disabled = true;
+  try {
+    const result = await Api.updateCashierExtraCashEntry(editingCashierExtraEntryId, { amount, note });
+    const index = state.cashierEntries.findIndex((entry) => String(entry.id) === editingCashierExtraEntryId);
+    if (index >= 0) state.cashierEntries[index] = result.entry;
+    closeCashierExtraCashEdit();
+    renderAll();
+    showToast('Extra-cash entry updated.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function openPosPrintOptions() { $('pos-print-options-modal').classList.remove('hidden'); }
 function closePosPrintOptions() { $('pos-print-options-modal').classList.add('hidden'); }
 function printPosDetailed() {
@@ -526,7 +639,25 @@ function printPosSummary() {
   const productGroups = new Map();
   const cashSales = sales.filter((sale) => sale.payment === 'CASH');
   const extraCashSales = cashSales.filter((sale) => Number(sale.extraCashKeptRs) > 0);
-  const extraCashTotal = extraCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0);
+  const manualExtraCashEntries = getPosIncomeExtraCashEntries();
+  const extraCashTotal = extraCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0)
+    + manualExtraCashEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const extraCashRows = [
+    ...extraCashSales.map((sale) => ({
+      source: 'Customer sale',
+      reference: sale.id,
+      customer: sale.customer || 'Walk-in Customer',
+      amount: Number(sale.extraCashKeptRs),
+      reason: sale.extraCashReason || 'No reason provided'
+    })),
+    ...manualExtraCashEntries.map((entry) => ({
+      source: 'Cashier entry',
+      reference: `${entry.date} ${entry.time || ''}`.trim(),
+      customer: '—',
+      amount: Number(entry.amount || 0),
+      reason: entry.note || 'No reason provided'
+    }))
+  ];
   sales.forEach((sale) => {
     const phone = phoneKey(sale.customerPhone);
     const loyalty = phone.length >= 7 && (state.customers || [])
@@ -558,9 +689,9 @@ function printPosSummary() {
   });
   $('pos-summary-print-area').innerHTML = `
     <h2>Income and Extra Cash Summary</h2>
-    <table><thead><tr><th>Receipt</th><th>Customer</th><th>Extra cash kept</th><th>Reason</th></tr></thead><tbody>${extraCashSales.map((sale) =>
-      `<tr><td>${esc(sale.id)}</td><td>${esc(sale.customer || 'Walk-in Customer')}</td><td>Rs. ${Number(sale.extraCashKeptRs).toLocaleString()}</td><td>${esc(sale.extraCashReason || 'No reason provided')}</td></tr>`
-    ).join('') || '<tr><td colspan="4" class="text-center">No extra cash was kept in this period.</td></tr>'}</tbody>
+    <table><thead><tr><th>Source</th><th>Reference</th><th>Customer</th><th>Extra cash</th><th>Reason</th></tr></thead><tbody>${extraCashRows.map((entry) =>
+      `<tr><td>${esc(entry.source)}</td><td>${esc(entry.reference)}</td><td>${esc(entry.customer)}</td><td>Rs. ${entry.amount.toLocaleString()}</td><td>${esc(entry.reason)}</td></tr>`
+    ).join('') || '<tr><td colspan="5" class="text-center">No extra cash was recorded in this period.</td></tr>'}</tbody>
     <tfoot><tr><th colspan="2">Total extra cash kept</th><th colspan="2">Rs. ${extraCashTotal.toLocaleString()}</th></tr></tfoot></table>
     <table><thead><tr><th>Product</th><th>Walk-in Customer Quantity</th><th>Loyalty Customer Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
       `<tr><td>${esc(product.name)}</td><td>${product.walkInQuantity ? `${product.walkInQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>${product.loyaltyQuantity ? `${product.loyaltyQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>Rs. ${product.total.toLocaleString()}</td></tr>`

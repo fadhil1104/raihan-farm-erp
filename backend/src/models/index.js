@@ -55,7 +55,7 @@ const PosSale = model('PosSale', new Schema({
 
 const CashierEntry = model('CashierEntry', new Schema({
   ...base, id: String, date: String, time: String,
-  type: { type: String, enum: ['OPENING', 'WITHDRAWAL'], required: true },
+  type: { type: String, enum: ['OPENING', 'WITHDRAWAL', 'EXTRA_CASH'], required: true },
   amount: { type: Number, required: true, min: 0 },
   takenBy: String, recordedBy: String, note: String, previousDate: String, previousClosingAmount: Number
 }, opts));
