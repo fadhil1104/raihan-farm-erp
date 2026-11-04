@@ -825,6 +825,7 @@ async function closeShopAndLogout() {
   ['pos-product-search', 'pos-weight-input', 'pos-quantity-input', 'pos-cust-phone',
     'pos-cust-name', 'pos-cash-received'].forEach((id) => { if ($(id)) $(id).value = ''; });
   $('pos-discount').value = '0';
+  $('pos-discount-type').value = 'percentage';
   $('pos-delivery-fee').value = '';
   document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
   $('pos-customer-status').innerText = '';
@@ -2139,6 +2140,7 @@ function removePosCartItem(idx) { posCart.splice(idx, 1); renderPosCart(); }
 function clearPosCart() {
   posCart = [];
   $('pos-discount').value = 0;
+  $('pos-discount-type').value = 'percentage';
   $('pos-delivery-fee').value = '';
   document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
   onPosFulfilmentChanged();
@@ -2183,11 +2185,29 @@ function renderPosCart() {
 
 function calculatePosDiscount(subtotal) {
   const input = $('pos-discount');
-  const percentage = Math.min(100, Math.max(0, Number(input.value) || 0));
-  input.value = percentage;
-  const discount = subtotal * percentage / 100;
+  const discountType = $('pos-discount-type').value;
+  const value = Math.max(0, Number(input.value) || 0);
+  let discount;
+  if (discountType === 'amount') {
+    input.max = Math.max(0, subtotal);
+    discount = Math.min(Math.max(0, subtotal), value);
+    input.value = discount;
+  } else {
+    const percentage = Math.min(100, value);
+    input.max = 100;
+    input.value = percentage;
+    discount = subtotal * percentage / 100;
+  }
+  discount = Math.round(discount * 100) / 100;
   $('pos-discount-amount').innerText = `Rs. ${discount.toLocaleString()}`;
   return discount;
+}
+
+function onPosDiscountTypeChanged() {
+  const isAmount = $('pos-discount-type').value === 'amount';
+  $('pos-discount').setAttribute('aria-label', isAmount ? 'Discount amount in rupees' : 'Discount percentage');
+  $('pos-discount').value = 0;
+  renderPosCart();
 }
 
 function updatePosCashPayment() {
@@ -2416,6 +2436,8 @@ function completePosSale() {
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
     totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
     payment, subtotal, discount, delivery, deliveryFeeRs, totalRs: grandTotal, cashReceivedRs, changeRs,
+    discountType: $('pos-discount-type').value,
+    discountValue: Math.max(0, Number($('pos-discount').value) || 0),
     loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
     loyaltyPointsRedeemed,
     loyaltyPointsBalanceAfter: customerPhoneKey ? pointsBalanceAfter : 0,
@@ -2509,7 +2531,8 @@ function confirmPosSale() {
   state.posSales.unshift({
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
-    totalKg: sale.totalKg, payment: sale.payment, totalRs: sale.totalRs,
+    totalKg: sale.totalKg, payment: sale.payment, subtotal: sale.subtotal, discount: sale.discount,
+    discountType: sale.discountType, discountValue: sale.discountValue, totalRs: sale.totalRs,
     delivery: sale.delivery, deliveryFeeRs: sale.deliveryFeeRs,
     cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
     loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
@@ -2535,6 +2558,7 @@ function confirmPosSale() {
   $('pos-customer-status').innerText = '';
   updatePosLoyaltySummary();
   $('pos-discount').value = 0;
+  $('pos-discount-type').value = 'percentage';
   updatePosCashSummary();
   $('receipt-review-note').classList.add('hidden');
   $('receipt-preview-actions').classList.add('hidden');
