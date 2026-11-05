@@ -41,8 +41,13 @@ Requirements: Node 18+ and MongoDB running on `localhost:27017` (or an Atlas URI
 Root convenience scripts are also available: `npm run dev:backend`,
 `npm run dev:frontend`, and `npm run build:frontend`.
 
-On first backend start, only the admin account from `ADMIN_USERNAME` and
-`ADMIN_PASSWORD` is created. Passwords are stored as bcrypt hashes. Existing MongoDB
+On first backend start, the admin account from `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` is created. To provision a read-only accountant login, set
+`ACCOUNTANT_USERNAME` (defaults to `accountant`) and `ACCOUNTANT_PASSWORD` in
+`backend/.env` or the backend environment. The configured user is created on
+startup if the username is unused; existing accountant passwords are not reset.
+Passwords are stored as bcrypt hashes. Accountant users can view all sections and
+records but cannot create, edit, or sell. Existing MongoDB
 records are not automatically deleted, except that existing employee records and
 their user/attendance references are migrated to staff and the legacy `employees`
 collection is dropped on backend startup. Non-admin user accounts without a staff
@@ -75,6 +80,7 @@ reachable from the API host (for example, use MongoDB Atlas).
    * `MONGODB_URI`: the production MongoDB connection string
    * `JWT_SECRET`: a unique, long random secret
    * `ADMIN_USERNAME` and `ADMIN_PASSWORD`: the initial admin account
+   * `ACCOUNTANT_USERNAME` and `ACCOUNTANT_PASSWORD`: the optional read-only accountant account (`accountant` is the default username)
    * `CORS_ORIGIN`: the exact deployed Vercel origin, such as
      `https://your-project.vercel.app` (add any custom domain origins as needed)
    * `TIMEZONE`: `Asia/Colombo` if the default timezone is appropriate

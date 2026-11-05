@@ -25,6 +25,8 @@ const phoneKey = (phone) => {
   const digits = String(phone || '').replace(/\D/g, '');
   return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
 };
+const isAccountant = () => currentUser?.role === 'accountant';
+const accountantReadOnlyActions = /^(switchTab|logout|print|download|close|setArchiveGranularity|setPosIncomePeriod|updatePosIncomeDateFilter|selectCashierDate|renderAnnualAnalytics|renderAttendanceLogs|renderCalendarDayInspector|renderInventoryCards|renderPosSalesHistory|searchPosProducts|togglePosProductList|pullFromServer|refreshPosSales|exportLifetimeBackup|loadInventoryStockAdditions|openPayslipModal|openAnnualReportModal|openPosPrintOptions)/;
 
 function showToast(message, type = 'success') {
   const container = $('toast-container');
@@ -210,7 +212,8 @@ function printPosSale(saleId) {
   $('receipt-review-note').classList.add('hidden');
   $('receipt-preview-actions').classList.add('hidden');
   $('receipt-saved-actions').classList.remove('hidden');
-  pendingReceiptRedemptionSaleId = Number(sale.loyaltyPointsRedeemed || 0) > 0 && !sale.loyaltyRedemptionPrinted
+  pendingReceiptRedemptionSaleId = !isAccountant()
+    && Number(sale.loyaltyPointsRedeemed || 0) > 0 && !sale.loyaltyRedemptionPrinted
     ? sale.id : null;
   $('receipt-close-button').classList.toggle('hidden', Boolean(pendingReceiptRedemptionSaleId));
   $('receipt-print-button').innerText = pendingReceiptRedemptionSaleId
@@ -830,6 +833,10 @@ async function refreshPosSales() {
 
 // Every action ends with saveState(): update vault mirror, re-render, push to server
 function saveState() {
+  if (isAccountant()) {
+    showToast('Accountant accounts have read-only access.', 'error');
+    return;
+  }
   ensureStateCollections();
   syncTodayIntoDailyVault();
   renderAll();
@@ -1049,6 +1056,7 @@ async function logout() {
   $('login-username').value = '';
   $('login-password').value = '';
   updateRoleSidebar();
+  enforceAccountantReadOnly();
   switchTab('pos');
   openLoginModal();
   showToast('You have been logged out.', 'info');
@@ -1064,23 +1072,29 @@ async function handleLogin() {
     currentUser = res.user;
     authenticated = true;
     updateRoleSidebar();
-    switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
     $('login-password').value = '';
     savePending = false;
     state = await Api.getState();
     ensureStateCollections();
     syncTodayIntoDailyVault();
     applyRolePermissions();
-    switchTab(currentUser.role === 'admin' ? 'dashboard' : 'pos');
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
     $('login-modal').classList.add('hidden');
     setSyncStatus('Connected to MongoDB');
-    showToast(currentUser.role === 'admin' ? 'Welcome Admin! Full dashboard, reports, and inventory controls unlocked.' : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.', currentUser.role === 'admin' ? 'success' : 'info');
+    showToast(currentUser.role === 'admin'
+      ? 'Welcome Admin! Full dashboard, reports, and inventory controls unlocked.'
+      : currentUser.role === 'accountant'
+        ? 'Logged in as Accountant: full records are available in read-only mode.'
+        : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.',
+    currentUser.role === 'staff' ? 'info' : 'success');
   } catch (err) {
     if (authenticated) {
       Api.clearToken();
       currentUser = null;
       state = null;
       updateRoleSidebar();
+      enforceAccountantReadOnly();
       switchTab('pos');
     }
     const box = $('login-error');
@@ -1094,11 +1108,15 @@ async function handleLogin() {
 function applyRolePermissions() {
   updateRoleSidebar();
   const isAdmin = currentUser && currentUser.role === 'admin';
+  const isReadOnly = isAccountant();
 
   const invNotice = $('inv-role-notice');
   if (isAdmin) {
     invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full';
     invNotice.innerText = 'Admin Mode: Unlimited Direct Edits';
+  } else if (isReadOnly) {
+    invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-violet-400 text-slate-950 rounded-full';
+    invNotice.innerText = 'Accountant Mode: View Only';
   } else {
     invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-sky-400 text-slate-950 rounded-full';
     invNotice.innerText = 'Staff Mode: 1 Direct Edit Per Item (2nd+ Requires Admin Approval)';
@@ -1108,11 +1126,16 @@ function applyRolePermissions() {
 
 function updateRoleSidebar() {
   const isAdmin = currentUser && currentUser.role === 'admin';
+  const canViewAdminPages = isAdmin || isAccountant();
   $('active-user-label').innerText = currentUser ? currentUser.label : 'Not signed in';
-  $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
-  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
-  $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>' : '<i class="fa-solid fa-cash-register"></i>';
-  document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !isAdmin));
+  $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5'
+    : isAccountant() ? 'text-xs font-extrabold text-violet-300 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
+  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : isAccountant() ? 'bg-violet-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
+  $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>'
+    : isAccountant() ? '<i class="fa-solid fa-eye"></i>' : '<i class="fa-solid fa-cash-register"></i>';
+  document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !canViewAdminPages));
+  $('pos-billing-terminal')?.classList.toggle('hidden', isAccountant());
+  $('pos-close-shop')?.classList.toggle('hidden', isAccountant());
   let number = 0;
   document.querySelectorAll('#nav-dashboard, #nav-slaughter, #nav-inventory, #nav-pos, #nav-attendance, #nav-payroll, #nav-deliveries, #nav-coa')
     .forEach((nav) => {
@@ -1124,7 +1147,7 @@ function updateRoleSidebar() {
 
 function switchTab(tabId) {
   const adminOnlyTabs = ['dashboard', 'slaughter', 'attendance', 'payroll', 'coa'];
-  if (currentUser && currentUser.role !== 'admin' && adminOnlyTabs.includes(tabId)) {
+  if (currentUser?.role === 'staff' && adminOnlyTabs.includes(tabId)) {
     showToast('Access Restricted: Staff can access POS, Dressed Inventory, and Deliveries & Weekly Subs.', 'error');
     tabId = 'pos';
   }
@@ -1145,6 +1168,71 @@ function switchTab(tabId) {
     targetNav.classList.remove('text-slate-300');
   }
 }
+
+function enforceAccountantReadOnly() {
+  const controls = document.querySelectorAll('button, input, select, textarea');
+  if (!isAccountant()) {
+    document.querySelectorAll('[data-accountant-disabled="true"]').forEach((control) => {
+      control.disabled = control.dataset.accountantOriginalDisabled === 'true';
+      delete control.dataset.accountantOriginalDisabled;
+      control.removeAttribute('aria-disabled');
+      if (control.dataset.accountantOriginalTitle) {
+        control.setAttribute('title', control.dataset.accountantOriginalTitle);
+      } else {
+        control.removeAttribute('title');
+      }
+      delete control.dataset.accountantOriginalTitle;
+      control.removeAttribute('data-accountant-disabled');
+    });
+    return;
+  }
+  controls.forEach((control) => {
+    const handler = ['onclick', 'onchange', 'oninput', 'onkeydown', 'onsubmit']
+      .map((attribute) => control.getAttribute(attribute) || '')
+      .join(' ');
+    const action = handler.match(/([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+    const isFilter = /search|filter|date|period|month|year|granularity|range/i.test(control.id || '');
+    const canUse = action
+      ? accountantReadOnlyActions.test(action)
+      : control.matches('input[type="date"]') && isFilter;
+    if (!canUse) {
+      control.dataset.accountantOriginalDisabled = String(control.disabled);
+      control.dataset.accountantOriginalTitle = control.getAttribute('title') || '';
+      control.disabled = true;
+      control.setAttribute('aria-disabled', 'true');
+      control.title = 'Accountant accounts have read-only access.';
+      control.setAttribute('data-accountant-disabled', 'true');
+    }
+  });
+}
+
+function blockAccountantWriteInteraction(event) {
+  if (!isAccountant()) return;
+  if (event.type === 'submit') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showToast('Accountant accounts have read-only access.', 'error');
+    return;
+  }
+  const control = event.target.closest?.('button, input, select, textarea');
+  if (!control) return;
+  const handler = ['onclick', 'onchange', 'oninput', 'onkeydown', 'onsubmit']
+    .map((attribute) => control.getAttribute(attribute) || '')
+    .join(' ');
+  const action = handler.match(/([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+  const isFilter = /search|filter|date|period|month|year|granularity|range/i.test(control.id || '');
+  const canUse = action
+    ? accountantReadOnlyActions.test(action)
+    : control.matches('input[type="date"]') && isFilter;
+  if (canUse) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  showToast('Accountant accounts have read-only access.', 'error');
+}
+
+['click', 'input', 'change', 'submit'].forEach((eventName) => {
+  document.addEventListener(eventName, blockAccountantWriteInteraction, true);
+});
 
 // ---------- MODULE 2: farm slaughter (30% waste) ----------
 function estimateSlaughterLiveKg(intakeLiveKg, intakeCount, slaughterCount) {
@@ -2828,6 +2916,7 @@ function closeReceiptModal() {
 }
 
 function finalizeLoyaltyRedemptionAfterPrint(saleId) {
+  if (isAccountant()) return showToast('Accountant accounts have read-only access.', 'error');
   const sale = state.posSales.find((entry) => entry.id === saleId);
   if (!sale || sale.loyaltyRedemptionPrinted || Number(sale.loyaltyPointsRedeemed || 0) <= 0) return;
   const customer = state.customers.find((entry) => phoneKey(entry.phone) === phoneKey(sale.customerPhone));
@@ -3460,6 +3549,7 @@ function renderInventoryCards() {
   $('inventory-supplier-options').innerHTML = uniqueSuppliers
     .map((supplier) => `<option value="${esc(supplier)}"></option>`).join('');
   const isAdmin = currentUser && currentUser.role === 'admin';
+  const isStaff = currentUser?.role === 'staff';
   const query = ($('inventory-search')?.value || '').trim().toLocaleLowerCase();
   const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -3479,14 +3569,19 @@ function renderInventoryCards() {
       : items.map((item) => {
     const unit = inventoryUnit(item), priceLabel = inventoryPriceLabel(item);
     const stockStep = unit === 'kg' ? '0.1' : '1';
-    return `
+        const priceAndStockControls = isAdmin
+          ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
+          : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
+              ${isStaff ? `<div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>` : ''}`;
+        return `
       <div class="card p-5 flex flex-col justify-between space-y-4 border border-slate-800">
         <div class="flex justify-between items-start gap-2">
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-xs font-bold uppercase text-yellow-400">${esc(item.source)}</span>
               <span class="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-slate-300">${esc(inventoryUnitLabel(item))}</span>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isAdmin ? 'bg-yellow-400/20 text-yellow-300' : 'bg-emerald-500/20 text-emerald-300'}">${isAdmin ? 'Admin: Inventory Editing' : 'Staff: Stock Additions Only'}</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isAdmin ? 'bg-yellow-400/20 text-yellow-300' : isStaff ? 'bg-emerald-500/20 text-emerald-300' : 'bg-violet-500/20 text-violet-300'}">${isAdmin ? 'Admin: Inventory Editing' : isStaff ? 'Staff: Stock Additions Only' : 'Accountant: View Only'}</span>
             </div>
             <h3 class="text-lg font-black text-white mt-1">${esc(item.name)}</h3>
           </div>
@@ -3499,17 +3594,13 @@ function renderInventoryCards() {
           <div class="sm:col-span-2"><label class="block text-xs text-slate-400 mb-1">Wholesale Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-wholesale-${esc(item.id)}" value="${Number(item.wholesalePrice || 0)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
         </div>` : ''}
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
-          ${isAdmin
-            ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
-          <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
-            : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
-          <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`}
+          ${priceAndStockControls}
         </div>
-        <div class="flex justify-end">
+        ${isAdmin || isStaff ? `<div class="flex justify-end">
           <button onclick="submitInventoryEdit('${esc(item.id)}')" class="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition bg-yellow-400 hover:bg-yellow-300 text-slate-950">
             <i class="fa-solid ${isAdmin ? 'fa-floppy-disk' : 'fa-plus'} mr-1"></i> ${isAdmin ? 'Save Inventory Update' : 'Add Stock'}
           </button>
-        </div>
+        </div>` : ''}
       </div>`;
   }).join('');
 }
@@ -3841,6 +3932,7 @@ function renderAll() {
       <td class="py-3 px-3 font-bold text-white">Rs. ${Number(s.price).toLocaleString()}</td>
       <td class="py-3 px-3 text-right"><button onclick="pushSubToSelectedDate(${s.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-paper-plane mr-1"></i> Push to Selected Date</button></td>
     </tr>`).join('');
+  enforceAccountantReadOnly();
 }
 
 function renderAttendanceLogs() {

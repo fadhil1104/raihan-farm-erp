@@ -23,9 +23,38 @@ async function ensureUsers() {
   console.log(`Created admin user: ${adminUsername}`);
 }
 
+async function ensureAccountant() {
+  const username = String(process.env.ACCOUNTANT_USERNAME || 'accountant').trim().toLowerCase();
+  const password = process.env.ACCOUNTANT_PASSWORD;
+  if (!password) {
+    console.log('Accountant account not created: set ACCOUNTANT_PASSWORD to enable it.');
+    return;
+  }
+  if (password.length < 8) {
+    throw new Error('ACCOUNTANT_PASSWORD must be at least 8 characters.');
+  }
+
+  const existing = await User.findOne({ username });
+  if (existing) {
+    if (existing.role !== 'accountant') {
+      throw new Error(`Cannot create accountant account: username "${username}" is already assigned to another role.`);
+    }
+    return;
+  }
+
+  await User.create({
+    username,
+    passwordHash: await bcrypt.hash(password, 10),
+    role: 'accountant',
+    label: 'Accountant (View Only)'
+  });
+  console.log(`Created accountant user: ${username}`);
+}
+
 async function seedDatabase() {
   await ensureUsers();
-  console.log('Admin setup complete. No demo business data was added.');
+  await ensureAccountant();
+  console.log('User setup complete. No demo business data was added.');
 }
 
 module.exports = { seedDatabase };

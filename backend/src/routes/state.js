@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { collections, DailyVault, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requireWriter } = require('../middleware/auth');
 const { todayStr } = require('../utils/time');
 const { randomUUID } = require('node:crypto');
 
@@ -13,7 +13,7 @@ async function buildState(role) {
     return [c.key, rows.map(clean)];
   }));
   const state = Object.fromEntries(entries);
-  if (role !== 'admin') {
+  if (role === 'staff') {
     // Staff never receives PINs, payroll or attendance
     state.staff = state.staff.filter((member) => !member.archivedAt)
       .map(({ pin, phone, archivedAt, baseSalary, otRate, allowance, advance, ...rest }) =>
@@ -272,7 +272,7 @@ router.get('/pos-sales', requireAuth, async (req, res) => {
 
 // PUT /api/state -> sync app state; staff inventory stock is changed only by stock additions and POS sales.
 // ?replace=true (admin) makes the database exactly match the payload - used by "Restore Backup"
-router.put('/', requireAuth, async (req, res) => {
+router.put('/', requireAuth, requireWriter, async (req, res) => {
   const body = req.body || {};
   const isAdmin = req.user.role === 'admin';
   const replace = isAdmin && req.query.replace === 'true';
@@ -312,7 +312,7 @@ router.put('/', requireAuth, async (req, res) => {
   res.json({ ok: true, savedAt: new Date().toISOString() });
 });
 
-router.post('/inventory/adjustments', requireAuth, async (req, res) => {
+router.post('/inventory/adjustments', requireAuth, requireWriter, async (req, res) => {
   const itemId = String(req.body?.itemId || '');
   const direction = String(req.body?.direction || '');
   const quantityRaw = req.body?.quantity;
@@ -432,7 +432,7 @@ router.post('/inventory/adjustments', requireAuth, async (req, res) => {
   res.status(201).json({ date, stockKg: updatedItem.stockKg, adjustment });
 });
 
-router.post('/cashier-entries', requireAuth, async (req, res) => {
+router.post('/cashier-entries', requireAuth, requireWriter, async (req, res) => {
   const { type } = req.body || {};
   const date = String(req.body?.date || '');
   const amount = Number(req.body?.amount);
@@ -562,7 +562,7 @@ router.post('/cashier-entries', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/cashier-entries/:id', requireAuth, async (req, res) => {
+router.put('/cashier-entries/:id', requireAuth, requireWriter, async (req, res) => {
   const entry = await CashierEntry.findOne({ id: req.params.id });
   if (!entry || entry.type !== 'EXTRA_CASH') {
     return res.status(404).json({ error: 'Extra-cash entry not found.' });
@@ -941,7 +941,7 @@ router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ item: clean(updated.toObject()) });
 });
 
-router.post('/inventory/:id/stock', requireAuth, async (req, res) => {
+router.post('/inventory/:id/stock', requireAuth, requireWriter, async (req, res) => {
   const item = await InventoryItem.findOne({ id: req.params.id });
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
 
