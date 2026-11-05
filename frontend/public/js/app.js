@@ -185,7 +185,7 @@ function renderPosSalesHistory() {
   $('pos-income-period-label').innerText = `${periodLabel} — Total Collected`;
   $('pos-history-heading').innerText = `${periodLabel} — Completed POS Transactions`;
   $('pos-history-tbody').innerHTML = sales.length === 0
-    ? `<tr><td colspan="${canManageSales ? 7 : 6}" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
+    ? `<tr><td colspan="7" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
     : sales.map((p) => `
     <tr class="hover:bg-slate-800/40 transition">
       <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
@@ -194,11 +194,29 @@ function renderPosSalesHistory() {
       <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
       <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
       <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}${Number(p.extraCashKeptRs) > 0 ? `<span class="mt-1 block text-xs font-semibold text-emerald-300">Extra cash kept: Rs. ${Number(p.extraCashKeptRs).toLocaleString()} · ${esc(p.extraCashReason || 'No reason provided')}</span>` : ''}</td>
-      ${canManageSales ? `<td data-label="Actions" class="text-right whitespace-nowrap">
-        <button type="button" onclick="editPosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
-        <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button></td>` : ''}
+      <td data-label="Actions" class="text-right whitespace-nowrap">
+        <button type="button" onclick="printPosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-bold text-emerald-300 transition hover:bg-emerald-400 hover:text-slate-950"><i class="fa-solid fa-print mr-1"></i>Print</button>
+        ${canManageSales ? `<button type="button" onclick="editPosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
+        <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button>` : ''}</td>
     </tr>`).join('');
   renderCashierDrawer();
+}
+
+function printPosSale(saleId) {
+  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
+  if (!sale) return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+
+  renderPosSaleReceipt(sale);
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.remove('hidden');
+  pendingReceiptRedemptionSaleId = Number(sale.loyaltyPointsRedeemed || 0) > 0 && !sale.loyaltyRedemptionPrinted
+    ? sale.id : null;
+  $('receipt-close-button').classList.toggle('hidden', Boolean(pendingReceiptRedemptionSaleId));
+  $('receipt-print-button').innerText = pendingReceiptRedemptionSaleId
+    ? 'Print Receipt & Redeem Points' : 'Print Thermal Receipt';
+  $('receipt-modal').classList.remove('hidden');
+  printSection('receipt-print-area');
 }
 
 function editPosSale(saleId) {
@@ -2657,11 +2675,12 @@ function renderPosSaleReceipt(sale) {
   $('rc-cash-change-row').classList.toggle('hidden', !cashPayment);
   $('rc-cash-paid').innerText = `Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}`;
   $('rc-cash-change').innerText = `Rs. ${Number(sale.changeRs || 0).toLocaleString()}`;
-  $('rc-loyalty').innerText = sale.customerPhoneKey
-    ? `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} will be redeemed after printing • ${Number(sale.loyaltyPointsBalanceAfter || 0) + Number(sale.loyaltyPointsRedeemed || 0)} current points`
+  const loyaltyCustomer = sale.customerPhoneKey || phoneKey(sale.customerPhone);
+  $('rc-loyalty').innerText = loyaltyCustomer
+    ? `${Number(sale.loyaltyPointsEarned || 0)} earned • ${sale.loyaltyRedemptionPrinted ? `${Number(sale.loyaltyPointsRedeemed || 0)} redeemed` : `${Number(sale.loyaltyPointsRedeemed || 0)} will be redeemed after printing`} • ${Number(sale.loyaltyPointsBalanceAfter || 0) + (sale.loyaltyRedemptionPrinted ? 0 : Number(sale.loyaltyPointsRedeemed || 0))} current points`
     : 'Add a customer phone number to earn points.';
   $('rc-loyalty-giveaway').innerText = sale.loyaltyFreeGiveawayKg
-    ? `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. Points will reset after printing.`
+    ? `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. ${sale.loyaltyRedemptionPrinted ? 'Points were reset after the original print.' : 'Points will reset after printing.'}`
     : '50 points = 500 g Chicken free';
 }
 
