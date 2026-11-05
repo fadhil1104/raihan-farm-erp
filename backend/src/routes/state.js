@@ -138,9 +138,6 @@ async function applySaleInventoryDelta(oldQuantities, newQuantities) {
       if (field === 'stockQuantity' && !Number.isInteger(delta)) {
         throw Object.assign(new Error(`Item ${item.name} must use a whole-number quantity.`), { status: 400 });
       }
-      if (delta > 0 && Number(item[field] || 0) < delta) {
-        throw Object.assign(new Error(`${item.name} does not have enough stock for the edited sale.`), { status: 409 });
-      }
       changes.push({ id, field, delta, name: item.name });
     }
   }
@@ -148,9 +145,10 @@ async function applySaleInventoryDelta(oldQuantities, newQuantities) {
   const applied = [];
   try {
     for (const change of changes) {
-      const filter = { id: change.id };
-      if (change.delta > 0) filter[change.field] = { $gte: change.delta };
-      const result = await InventoryItem.updateOne(filter, { $inc: { [change.field]: -change.delta } });
+      const result = await InventoryItem.updateOne(
+        { id: change.id },
+        { $inc: { [change.field]: -change.delta } }
+      );
       if (!result.matchedCount) {
         throw Object.assign(new Error(`${change.name} stock changed while you were editing. Refresh and try again.`), { status: 409 });
       }
@@ -177,10 +175,10 @@ function adjustVaultInventorySnapshot(snapshot, quantities, restore) {
     const oldSpecificClosing = Number(row[closingField] ?? oldClosing);
     const adjustment = restore ? sold.quantity : -sold.quantity;
     row.soldStock = Math.max(0, oldSold + adjustment);
-    row.closingStock = Math.max(0, oldClosing - adjustment);
+    row.closingStock = oldClosing - adjustment;
     if (sold.field === 'stockKg') {
       row.soldKg = Math.max(0, oldSpecificSold + adjustment);
-      row.closingKg = Math.max(0, oldSpecificClosing - adjustment);
+      row.closingKg = oldSpecificClosing - adjustment;
     }
   });
 }

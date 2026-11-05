@@ -880,7 +880,7 @@
         <div>
           <span class="px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full">Walk-In & Counter Billing</span>
           <h2 class="text-2xl font-black mt-1">Raihan Farm Shop — Point of Sale (POS)</h2>
-          <p class="text-slate-400 text-sm">Search items, sell meat by weight or packaged goods by whole quantity, and print the customer receipt. Earn 1 loyalty point per 1 kg of meat; redeem 50 points for 500 g Chicken free. Stock is deducted automatically.</p>
+          <p class="text-slate-400 text-sm">Search items, sell meat by weight or packaged goods by whole quantity, and print the customer receipt. Adjust unit prices on credit bills as needed. Stock may go below zero during sales; add the missing stock before closing the POS day.</p>
         </div>
         <button type="button" onclick="closeShopAndLogout()" class="shrink-0 rounded-xl border border-red-500/60 bg-red-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white shadow-lg shadow-red-600/20 transition hover:bg-red-500">
           <i class="fa-solid fa-store-slash mr-1"></i> Shop Closed
@@ -889,7 +889,7 @@
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div class="lg:col-span-7 space-y-5">
           <div class="card p-5">
-            <h3 class="font-bold text-xs uppercase tracking-wider text-yellow-400 mb-3">1. Select Inventory Product</h3>
+            <h3 class="font-bold text-xs uppercase tracking-wider text-yellow-400 mb-3">1. Select Inventory Product <span class="text-[10px] normal-case text-slate-400">— most frequently sold first</span></h3>
             <div class="relative mb-3">
               <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"></i>
               <input type="search" id="pos-product-search" oninput="searchPosProducts()" placeholder="Search products by name..." class="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm">

@@ -934,7 +934,7 @@ function syncTodayIntoDailyVault() {
         ? previousClosingStock
         : Number.isFinite(Number(existingItemSnapshot?.openingStock ?? existingItemSnapshot?.openingKg))
           ? Number(existingItemSnapshot.openingStock ?? existingItemSnapshot.openingKg)
-          : Math.max(0, +(closingStock - addedStock + soldStock).toFixed(precision));
+          : +(closingStock - addedStock + soldStock).toFixed(precision);
       return {
         id: item.id, name: item.name, source: item.source, unitType, unitLabel,
         openingStock, addedStock: +addedStock.toFixed(precision), soldStock: +soldStock.toFixed(precision),
@@ -987,6 +987,13 @@ function closeLoginModal() { if (currentUser) $('login-modal').classList.add('hi
 
 async function closeShopAndLogout() {
   if (!currentUser) return openLoginModal();
+  const negativeStockItems = state.inventory.filter((item) => inventoryStock(item) < 0);
+  if (negativeStockItems.length) {
+    const details = negativeStockItems
+      .map((item) => `• ${item.name}: ${inventoryStockText(item, inventoryUnit(item) === 'kg' ? 2 : 0)}`)
+      .join('\n');
+    return alert(`Cannot close the POS day while inventory is below zero. Add stock for these items first:\n\n${details}`);
+  }
   if (pendingReceiptRedemptionSaleId) {
     return showToast('Print the open receipt and complete its loyalty redemption before closing the shop.', 'error');
   }
@@ -2285,12 +2292,6 @@ function addItemToPosCart() {
   if (!Number.isFinite(quantity) || quantity <= 0 || (wholeQuantity && !Number.isInteger(quantity))) {
     return showToast(wholeQuantity ? 'Enter a positive whole packet/unit quantity.' : 'Please enter a valid weight (kg).', 'error');
   }
-  const inCart = posCart.filter((cartItem) => cartItem.id === item.id)
-    .reduce((sum, cartItem) => sum + cartItem.quantity, 0);
-  if (quantity + inCart > inventoryStock(item)) {
-    return showToast(`Not enough stock! Available: ${inventoryStockText(item, unit === 'kg' ? 2 : 0)}`, 'error');
-  }
-
   const isPieces = supportsChickenCutOption(item) && isPiecesOptionSelected();
   const listedUnitPrice = inventoryPrice(item) + (isPieces ? PIECES_PRICE_INCREASE_PER_KG : 0);
   const lineTotal = unit === 'kg' ? Number($('pos-amount-input').value) : Math.round(quantity * listedUnitPrice);
@@ -2300,15 +2301,18 @@ function addItemToPosCart() {
   const unitPrice = quantity > 0 ? lineTotal / quantity : listedUnitPrice;
   const existing = posCart.find((c) => c.id === item.id && Boolean(c.isPieces) === isPieces && !c.isLoyaltyFreeGiveaway);
   if (existing) {
+    const previousQuantity = existing.quantity;
+    const previousRetailUnitPrice = Number(existing.retailUnitPrice ?? existing.unitPrice);
     existing.quantity = unit === 'kg' ? +(existing.quantity + quantity).toFixed(2) : existing.quantity + quantity;
     existing.lineTotal += lineTotal;
     existing.unitPrice = existing.lineTotal / existing.quantity;
+    existing.retailUnitPrice = (previousRetailUnitPrice * previousQuantity + unitPrice * quantity) / existing.quantity;
   } else {
     posCart.push({
       id: item.id, name: item.name, unitType: unit, ...(isPieces ? { isPieces: true } : {}),
       quantity: unit === 'kg' ? +quantity.toFixed(2) : quantity,
       packWeightGrams: Number(item.packWeightGrams || 0),
-      unitPrice, lineTotal
+      unitPrice, retailUnitPrice: unitPrice, lineTotal
     });
   }
   renderPosCart();
@@ -2345,7 +2349,15 @@ function renderPosCart() {
     ? `<div class="text-center py-8 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">No items in bill yet. Search and select an item to add.</div>`
     : posCart.map((c, idx) => `
       <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border ${c.isLoyaltyFreeGiveaway ? 'border-emerald-500/40' : 'border-slate-800'} text-xs">
-        <div><p class="font-bold text-white">${esc(c.name)}${c.isPieces ? ' — Pieces' : ''}</p><p class="text-slate-400">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}${c.quantity === 1 ? '' : 's'} ${c.isLoyaltyFreeGiveaway ? '— FREE LOYALTY GIVEAWAY' : `× Rs. ${c.unitPrice.toLocaleString()} ${esc(inventoryPriceLabel(c))}`}</p></div>
+        <div>
+          <p class="font-bold text-white">${esc(c.name)}${c.isPieces ? ' — Pieces' : ''}</p>
+          <p class="text-slate-400">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}${c.quantity === 1 ? '' : 's'}${c.isLoyaltyFreeGiveaway ? ' — FREE LOYALTY GIVEAWAY' : ''}</p>
+          ${!c.isLoyaltyFreeGiveaway && $('pos-pay-method').value === 'CREDIT'
+            ? `<label class="mt-1 flex items-center gap-1 text-[11px] text-yellow-300">Unit price (Rs. ${esc(inventoryPriceLabel(c))})<input type="number" min="0" step="0.01" value="${Number(c.unitPrice)}" onchange="updatePosCartUnitPrice(${idx}, this.value)" class="w-24 rounded bg-slate-800 px-2 py-1 text-right text-white"></label>`
+            : !c.isLoyaltyFreeGiveaway
+              ? `<p class="text-slate-400">× Rs. ${c.unitPrice.toLocaleString()} ${esc(inventoryPriceLabel(c))}</p>`
+              : ''}
+        </div>
         <div class="flex items-center gap-3">
           <span class="font-extrabold ${c.isLoyaltyFreeGiveaway ? 'text-emerald-400' : 'text-yellow-400'} text-sm">${c.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${c.lineTotal.toLocaleString()}`}</span>
           <button onclick="removePosCartItem(${idx})" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-xmark"></i></button>
@@ -2362,6 +2374,19 @@ function renderPosCart() {
   $('pos-grand-total').innerText = `Rs. ${grandTotal.toLocaleString()}`;
   updatePosCashSummary();
   updatePosLoyaltySummary();
+}
+
+function updatePosCartUnitPrice(index, value) {
+  const item = posCart[index];
+  const unitPrice = Number(value);
+  if (!item || $('pos-pay-method').value !== 'CREDIT') return;
+  if (String(value).trim() === '' || !Number.isFinite(unitPrice) || unitPrice < 0) {
+    showToast('Enter a valid non-negative unit price.', 'error');
+    return renderPosCart();
+  }
+  item.unitPrice = unitPrice;
+  item.lineTotal = Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+  renderPosCart();
 }
 
 function calculatePosDiscount(subtotal) {
@@ -2392,13 +2417,29 @@ function onPosDiscountTypeChanged() {
 }
 
 function updatePosCashPayment() {
-  const cashPayment = $('pos-pay-method').value === 'CASH';
+  const payment = $('pos-pay-method').value;
+  const cashPayment = payment === 'CASH';
   $('pos-cash-payment').classList.toggle('hidden', !cashPayment);
   $('pos-change-summary').classList.toggle('hidden', !cashPayment);
   if (!cashPayment) {
     $('pos-extra-cash-kept').value = '';
     $('pos-extra-cash-reason').value = '';
   }
+  if (payment !== 'CREDIT') {
+    posCart.forEach((item) => {
+      if (item.isLoyaltyFreeGiveaway) return;
+      item.retailUnitPrice = Number(item.retailUnitPrice ?? item.unitPrice);
+      item.unitPrice = item.retailUnitPrice;
+      item.lineTotal = Math.round((item.unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+    });
+  } else {
+    posCart.forEach((item) => {
+      if (!item.isLoyaltyFreeGiveaway && !Number.isFinite(Number(item.retailUnitPrice))) {
+        item.retailUnitPrice = item.unitPrice;
+      }
+    });
+  }
+  renderPosCart();
   updatePosCashSummary();
 }
 
@@ -2702,16 +2743,12 @@ function confirmPosSale() {
   for (const [id, quantity] of quantities) {
     const item = state.inventory.find((entry) => String(entry.id) === id);
     if (!item) return showToast('An item in this bill no longer exists. Review the bill before saving.', 'error');
-    const stockTolerance = inventoryUnit(item) === 'kg' ? 0.000001 : 0;
-    if (inventoryStock(item) + stockTolerance < quantity) {
-      return showToast(`${item.name} does not have enough stock to complete this sale.`, 'error');
-    }
   }
 
   quantities.forEach((quantity, id) => {
     const item = state.inventory.find((entry) => String(entry.id) === id);
-    if (inventoryUnit(item) === 'kg') item.stockKg = Math.max(0, +(Number(item.stockKg || 0) - quantity).toFixed(2));
-    else item.stockQuantity = Math.max(0, Number(item.stockQuantity || 0) - quantity);
+    if (inventoryUnit(item) === 'kg') item.stockKg = +(Number(item.stockKg || 0) - quantity).toFixed(2);
+    else item.stockQuantity = Number(item.stockQuantity || 0) - quantity;
   });
 
   let customerRecord = sale.customerPhoneKey
@@ -3357,11 +3394,28 @@ function saveExpenseVoucher() {
 // ---------- RENDERING ----------
 function renderPosProducts() {
   const query = ($('pos-product-search')?.value || '').trim().toLocaleLowerCase();
-  const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const salesFrequency = new Map();
+  (state.posSales || []).forEach((sale) => {
+    const itemIds = new Set();
+    if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
+      sale.itemsDetails.forEach((detail) => {
+        if (!detail.isLoyaltyFreeGiveaway && Number(detail.quantity) > 0 && detail.id !== undefined) {
+          itemIds.add(String(detail.id));
+        }
+      });
+    } else {
+      Object.entries(sale.itemsBreakdown || {}).forEach(([id, quantity]) => {
+        if (Number(quantity) > 0) itemIds.add(String(id));
+      });
+    }
+    itemIds.forEach((id) => salesFrequency.set(id, (salesFrequency.get(id) || 0) + 1));
+  });
+  const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query));
+  items.sort((a, b) => (salesFrequency.get(String(b.id)) || 0) - (salesFrequency.get(String(a.id)) || 0)
+    || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   const visibleItems = showAllPosProducts ? items : items.slice(0, 6);
   $('pos-product-grid').innerHTML = state.inventory.length === 0
-    ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No inventory items yet. Add stock before creating a sale.</div>'
+    ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No inventory items yet. Add products before creating a sale.</div>'
     : items.length === 0
       ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No products start with that search text.</div>'
       : visibleItems.map((item) => {
