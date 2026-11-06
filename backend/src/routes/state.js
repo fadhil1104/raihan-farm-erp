@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { collections, DailyVault, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
+const { collections, DailyVault, DailyPosCounter, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
 const { requireAuth, requireAdmin, requireWriter } = require('../middleware/auth');
 const { todayStr } = require('../utils/time');
 const { randomUUID } = require('node:crypto');
@@ -31,7 +31,17 @@ async function syncCollection(c, items, replace) {
   if (docs.length) {
     const ops = docs.map((doc) => {
       if (!replace && c.insertOnly) {
-        return { updateOne: { filter: { uid: doc.uid }, update: { $setOnInsert: doc }, upsert: true } };
+        const insertDoc = { ...doc };
+        const update = { $setOnInsert: insertDoc };
+        if (c.key === 'posSales' && doc.loyaltyRedemptionPrinted === true) {
+          delete insertDoc.loyaltyRedemptionPrinted;
+          delete insertDoc.loyaltyPointsBalanceAfter;
+          update.$set = { loyaltyRedemptionPrinted: true };
+          if (Number.isFinite(Number(doc.loyaltyPointsBalanceAfter))) {
+            update.$set.loyaltyPointsBalanceAfter = Number(doc.loyaltyPointsBalanceAfter);
+          }
+        }
+        return { updateOne: { filter: { uid: doc.uid }, update, upsert: true } };
       }
       const set = { ...doc }, onInsert = {};
       if (!replace && c.protect) c.protect.forEach((k) => { if (k in set) { onInsert[k] = set[k]; delete set[k]; } });
@@ -257,6 +267,119 @@ function phoneKey(value) {
   return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
 }
 
+async function nextDailyCustomerNumber(date) {
+  const existingSales = await PosSale.countDocuments({ date });
+  await DailyPosCounter.updateOne(
+    { uid: date },
+    { $setOnInsert: { uid: date, id: date, date, count: existingSales, seq: Date.now() } },
+    { upsert: true }
+  );
+  const counter = await DailyPosCounter.findOneAndUpdate(
+    { uid: date },
+    { $inc: { count: 1 } },
+    { new: true }
+  );
+  if (!counter) throw new Error(`Could not allocate a customer number for ${date}.`);
+  return counter.count;
+}
+
+function saleTimeMinutes(time) {
+  const match = String(time || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!match) return -1;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (match[3]) {
+    hour %= 12;
+    if (match[3].toUpperCase() === 'PM') hour += 12;
+  }
+  return hour * 60 + minute;
+}
+
+function compareSalesChronologically(left, right) {
+  const dateOrder = String(left.date || '').localeCompare(String(right.date || ''));
+  if (dateOrder) return dateOrder;
+  const timeOrder = saleTimeMinutes(left.time) - saleTimeMinutes(right.time);
+  if (timeOrder) return timeOrder;
+  const createdOrder = String(left.createdAt || '').localeCompare(String(right.createdAt || ''));
+  return createdOrder || String(left.id || '').localeCompare(String(right.id || ''));
+}
+
+async function refreshSaleCustomerLoyalty(phoneNumbers) {
+  const keys = new Set(phoneNumbers.map(phoneKey).filter(Boolean));
+  if (!keys.size) return;
+
+  const sales = await PosSale.find()
+    .select('id date time createdAt customerPhone itemsDetails loyaltyPointsEarned loyaltyPointsRedeemed loyaltyRedemptionPrinted')
+    .lean();
+  const customers = await Customer.find().lean();
+  const saleUpdates = [];
+  const customerUpdates = [];
+  const recalculatedByDate = new Map();
+
+  for (const key of keys) {
+    let pointsBalance = 0;
+    let kgRemainder = 0;
+    const customerSales = sales.filter((sale) => phoneKey(sale.customerPhone) === key)
+      .sort(compareSalesChronologically);
+
+    for (const sale of customerSales) {
+      const qualifyingKg = Array.isArray(sale.itemsDetails)
+        ? sale.itemsDetails
+          .filter((item) => item.unitType === 'kg' && !item.isLoyaltyFreeGiveaway)
+          .reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0)
+        : Math.max(0, Number(sale.loyaltyPointsEarned) || 0);
+      const accumulatedKg = kgRemainder + qualifyingKg;
+      const pointsEarned = Math.floor(accumulatedKg + 0.0000001);
+      kgRemainder = +(accumulatedKg - pointsEarned).toFixed(4);
+      pointsBalance += pointsEarned;
+
+      const pointsRedeemed = Math.max(0, Number(sale.loyaltyPointsRedeemed) || 0);
+      const balanceAfter = Math.max(0, pointsBalance - pointsRedeemed);
+      if (sale.loyaltyRedemptionPrinted) pointsBalance = balanceAfter;
+
+      const loyaltyUpdate = {
+        loyaltyPointsEarned: pointsEarned,
+        loyaltyPointsBalanceAfter: balanceAfter,
+        loyaltyKgRemainderAfter: kgRemainder
+      };
+      saleUpdates.push({
+        updateOne: {
+          filter: { id: sale.id },
+          update: { $set: loyaltyUpdate }
+        }
+      });
+      if (!recalculatedByDate.has(sale.date)) recalculatedByDate.set(sale.date, new Map());
+      recalculatedByDate.get(sale.date).set(String(sale.id), loyaltyUpdate);
+    }
+
+    customers.filter((entry) => phoneKey(entry.phone) === key).forEach((customer) => {
+      customerUpdates.push({
+        updateOne: {
+          filter: { _id: customer._id },
+          update: { $set: { loyaltyPoints: pointsBalance, loyaltyKgRemainder: kgRemainder } }
+        }
+      });
+    });
+  }
+
+  if (saleUpdates.length) await PosSale.bulkWrite(saleUpdates);
+  if (customerUpdates.length) await Customer.bulkWrite(customerUpdates);
+
+  for (const [date, updates] of recalculatedByDate) {
+    if (!date) continue;
+    const vault = await DailyVault.findOne({ uid: date });
+    if (!vault) continue;
+    let changed = false;
+    for (const sale of vault.posSales || []) {
+      const loyaltyUpdate = updates.get(String(sale.id));
+      if (!loyaltyUpdate) continue;
+      Object.assign(sale, loyaltyUpdate);
+      changed = true;
+    }
+    if (changed) await vault.save();
+  }
+}
+
 // GET /api/state -> whole app state (same shape the old localStorage object had)
 router.get('/', requireAuth, async (req, res) => {
   res.json(await buildState(req.user.role));
@@ -277,6 +400,21 @@ router.put('/', requireAuth, requireWriter, async (req, res) => {
   const isAdmin = req.user.role === 'admin';
   const replace = isAdmin && req.query.replace === 'true';
   const newlyCreatedSales = [];
+  if (!replace && Array.isArray(body.posSales)) {
+    const sales = body.posSales.filter((sale) => sale && sale.id !== undefined && sale.id !== null);
+    const existingSales = await PosSale.find({ id: { $in: sales.map((sale) => String(sale.id)) } })
+      .select('id')
+      .lean();
+    const existingIds = new Set(existingSales.map((sale) => String(sale.id)));
+    for (const sale of sales) {
+      if (existingIds.has(String(sale.id)) || !sale.date) continue;
+      sale.dailyCustomerNumber = await nextDailyCustomerNumber(String(sale.date));
+      const vaultSale = body.dailyVault?.[String(sale.date)]?.posSales?.find(
+        (entry) => String(entry.id) === String(sale.id)
+      );
+      if (vaultSale) vaultSale.dailyCustomerNumber = sale.dailyCustomerNumber;
+    }
+  }
   for (const c of collections) {
     if (c.adminOnly && !isAdmin) continue;
     if (c.key === 'cashierEntries' && !replace) continue;
@@ -309,7 +447,14 @@ router.put('/', requireAuth, requireWriter, async (req, res) => {
     });
     if (ops.length) await DailyVault.bulkWrite(ops);
   }
-  res.json({ ok: true, savedAt: new Date().toISOString() });
+  res.json({
+    ok: true,
+    savedAt: new Date().toISOString(),
+    dailyCustomerNumbers: newlyCreatedSales.map((sale) => ({
+      id: String(sale.id),
+      dailyCustomerNumber: Number(sale.dailyCustomerNumber || 0)
+    }))
+  });
 });
 
 router.post('/inventory/adjustments', requireAuth, requireWriter, async (req, res) => {
@@ -669,8 +814,18 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   const itemsSummary = itemsDetails.map((item) =>
     `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${item.quantity === 1 ? '' : 's'})`
   ).join(', ');
+  const updatedDate = String(body.date);
+  const dailyCustomerNumber = updatedDate !== sale.date
+    ? await nextDailyCustomerNumber(updatedDate)
+    : undefined;
+  const loyaltyReset = phoneKey(customerPhone) ? {} : {
+    loyaltyPointsEarned: 0,
+    loyaltyPointsRedeemed: 0,
+    loyaltyPointsBalanceAfter: 0,
+    loyaltyKgRemainderAfter: 0
+  };
   const updates = {
-    date: String(body.date),
+    date: updatedDate,
     time,
     customer,
     customerPhone,
@@ -687,7 +842,9 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
     itemsDetails,
     itemsBreakdown,
     itemsSummary,
-    totalKg
+    totalKg,
+    ...loyaltyReset,
+    ...(dailyCustomerNumber !== undefined ? { dailyCustomerNumber } : {})
   };
   let inventoryChanges = [];
   let updatedSale;
@@ -729,6 +886,7 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
 
   await updateSaleVaults(sale, updatedSale, oldQuantities, newQuantities);
   await refreshSaleCustomerTotals([sale.customerPhone, customerPhone]);
+  await refreshSaleCustomerLoyalty([sale.customerPhone, customerPhone]);
   res.json({ sale: clean(updatedSale.toObject()) });
 });
 
@@ -848,31 +1006,6 @@ router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
 
   await Receivable.deleteOne({ id: sale.id });
 
-  const salePhone = phoneKey(sale.customerPhone);
-  if (salePhone) {
-    const customers = await Customer.find().lean();
-    const customer = customers.find((entry) => phoneKey(entry.phone) === salePhone);
-    if (customer) {
-      const remainingSales = await PosSale.find().select('date time customerPhone').lean();
-      const customerSales = remainingSales
-        .filter((entry) => phoneKey(entry.customerPhone) === salePhone)
-        .sort((a, b) => `${b.date || ''} ${b.time || ''}`.localeCompare(`${a.date || ''} ${a.time || ''}`));
-      const loyaltyAdjustment = Number(sale.loyaltyPointsEarned || 0)
-        - (sale.loyaltyRedemptionPrinted ? Number(sale.loyaltyPointsRedeemed || 0) : 0);
-      await Customer.updateOne(
-        { _id: customer._id },
-        {
-          $set: {
-            lastVisit: customerSales[0]?.date || '',
-            visitCount: Math.max(0, Number(customer.visitCount || 0) - 1),
-            totalSpent: Math.max(0, Number(customer.totalSpent || 0) - Number(sale.totalRs || 0)),
-            loyaltyPoints: Math.max(0, Number(customer.loyaltyPoints || 0) - loyaltyAdjustment)
-          }
-        }
-      );
-    }
-  }
-
   const vault = await DailyVault.findOne({ uid: sale.date });
   if (vault) {
     vault.posSales = (vault.posSales || []).filter((entry) => String(entry.id) !== String(sale.id));
@@ -891,6 +1024,8 @@ router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
     await vault.save();
   }
 
+  await refreshSaleCustomerTotals([sale.customerPhone]);
+  await refreshSaleCustomerLoyalty([sale.customerPhone]);
   res.json({ ok: true, deletedSale: clean(sale.toObject()), restoredInventoryItems: itemIds.length });
 });
 

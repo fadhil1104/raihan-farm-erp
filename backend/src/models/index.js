@@ -50,7 +50,14 @@ const PosSale = model('PosSale', new Schema({
   itemsBreakdown: Schema.Types.Mixed, itemsDetails: [Schema.Types.Mixed], totalKg: Number, payment: String, totalRs: Number,
   delivery: { type: Boolean, default: false }, deliveryFeeRs: { type: Number, default: 0 },
   cashReceivedRs: Number, changeRs: Number, extraCashKeptRs: { type: Number, default: 0 }, extraCashReason: String,
-  loyaltyPointsEarned: Number, loyaltyPointsRedeemed: Number, loyaltyPointsBalanceAfter: Number, loyaltyFreeGiveawayKg: Number
+  loyaltyPointsEarned: Number, loyaltyPointsRedeemed: Number, loyaltyPointsBalanceAfter: Number,
+  loyaltyKgRemainderAfter: Number, loyaltyFreeGiveawayKg: Number,
+  loyaltyRedemptionPrinted: { type: Boolean, default: false },
+  dailyCustomerNumber: Number
+}, opts));
+
+const DailyPosCounter = model('DailyPosCounter', new Schema({
+  ...base, date: String, count: { type: Number, default: 0 }
 }, opts));
 
 const CashierEntry = model('CashierEntry', new Schema({
@@ -134,5 +141,5 @@ const collections = [
  */
 
 module.exports = {
-  collections, DailyVault, InventoryItem, InventoryStockAddition, Staff, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
+  collections, DailyVault, DailyPosCounter, InventoryItem, InventoryStockAddition, Staff, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
 };

@@ -222,6 +222,23 @@ function printPosSale(saleId) {
   printSection('receipt-print-area');
 }
 
+function getDailyCustomerNumber(sale) {
+  const savedNumber = Number(sale.dailyCustomerNumber);
+  if (Number.isInteger(savedNumber) && savedNumber > 0) return savedNumber;
+  const daySales = (state?.posSales || []).filter((entry) => entry.date === sale.date);
+  const saleIndex = daySales.findIndex((entry) => String(entry.id) === String(sale.id));
+  return saleIndex >= 0 ? daySales.length - saleIndex : daySales.length + 1;
+}
+
+function getNextDailyCustomerNumber(date) {
+  const daySales = (state?.posSales || []).filter((sale) => sale.date === date);
+  const highestNumber = daySales.reduce((highest, sale) => {
+    const number = Number(sale.dailyCustomerNumber);
+    return Number.isInteger(number) && number > highest ? number : highest;
+  }, 0);
+  return Math.max(daySales.length, highestNumber) + 1;
+}
+
 function editPosSale(saleId) {
   if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS sales.', 'error');
   const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
@@ -774,7 +791,19 @@ async function flushSave() {
   saveInFlight = true;
   const versionAtStart = stateVersion;
   try {
-    await Api.putState(state);
+    const result = await Api.putState(state);
+    (result.dailyCustomerNumbers || []).forEach(({ id, dailyCustomerNumber }) => {
+      const sale = state.posSales.find((entry) => String(entry.id) === String(id));
+      if (!sale || !Number.isInteger(Number(dailyCustomerNumber)) || Number(dailyCustomerNumber) < 1) return;
+      sale.dailyCustomerNumber = Number(dailyCustomerNumber);
+      const vaultSale = state.dailyVault?.[sale.date]?.posSales?.find(
+        (entry) => String(entry.id) === String(sale.id)
+      );
+      if (vaultSale) vaultSale.dailyCustomerNumber = sale.dailyCustomerNumber;
+      if ($('rc-id').innerText === `#${sale.id}`) {
+        $('rc-customer-count').innerText = String(sale.dailyCustomerNumber);
+      }
+    });
     if (versionAtStart === stateVersion) savePending = false; else queueSave();
     setSyncStatus('Saved to MongoDB');
   } catch (err) {
@@ -2762,6 +2791,7 @@ function completePosSale() {
 
   pendingPosSale = {
     id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
+    dailyCustomerNumber: getNextDailyCustomerNumber(getTodayDate()),
     customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
     totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
     payment, subtotal, discount, delivery, deliveryFeeRs, totalRs: grandTotal, cashReceivedRs, changeRs,
@@ -2783,6 +2813,7 @@ function completePosSale() {
 
 function renderPosSaleReceipt(sale) {
   $('rc-id').innerText = `#${sale.id}`;
+  $('rc-customer-count').innerText = String(getDailyCustomerNumber(sale));
   $('rc-customer').innerText = sale.customer;
   $('rc-phone').innerText = sale.customerPhone || '—';
   $('rc-date').innerText = `${sale.date} ${sale.time}`;
@@ -2859,6 +2890,7 @@ function confirmPosSale() {
   }
   state.posSales.unshift({
     id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
+    dailyCustomerNumber: sale.dailyCustomerNumber,
     itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
     totalKg: sale.totalKg, payment: sale.payment, subtotal: sale.subtotal, discount: sale.discount,
     discountType: sale.discountType, discountValue: sale.discountValue, totalRs: sale.totalRs,
