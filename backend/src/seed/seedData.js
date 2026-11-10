@@ -51,38 +51,9 @@ async function ensureAccountant() {
   console.log(`Created accountant user: ${username}`);
 }
 
-async function ensureFarmUser() {
-  const username = String(process.env.FARM_USERNAME || 'farm').trim().toLowerCase();
-  const password = process.env.FARM_PASSWORD;
-  if (!password) {
-    console.log('Farm account not created: set FARM_PASSWORD to enable it.');
-    return;
-  }
-  if (password.length < 8) {
-    throw new Error('FARM_PASSWORD must be at least 8 characters.');
-  }
-
-  const existing = await User.findOne({ username });
-  if (existing) {
-    if (existing.role !== 'farm') {
-      throw new Error(`Cannot create farm account: username "${username}" is already assigned to another role.`);
-    }
-    return;
-  }
-
-  await User.create({
-    username,
-    passwordHash: await bcrypt.hash(password, 10),
-    role: 'farm',
-    label: 'Farm & Slaughter'
-  });
-  console.log(`Created farm user: ${username}`);
-}
-
 async function seedDatabase() {
   await ensureUsers();
   await ensureAccountant();
-  await ensureFarmUser();
   console.log('User setup complete. No demo business data was added.');
 }
 
