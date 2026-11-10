@@ -284,7 +284,7 @@ function addPosSaleEditItem(item = {}) {
   row.innerHTML = `
     <td class="p-2"><select aria-label="Product" required class="pos-edit-item-product w-full rounded-lg px-2 py-2 text-xs"><option value="">Select product</option>${options.join('')}</select></td>
     <td class="p-2"><input aria-label="Quantity" type="number" min="0.01" step="0.01" required value="${esc(item.quantity ?? 1)}" class="pos-edit-item-quantity w-24 rounded-lg px-2 py-2 text-xs"></td>
-    <td class="p-2"><input aria-label="Unit price" type="number" min="0" step="0.01" required value="${esc(item.unitPrice ?? 0)}" class="pos-edit-item-price w-28 rounded-lg px-2 py-2 text-xs"></td>
+    <td class="p-2"><input aria-label="Unit price" type="number" min="0" step="0.01" required value="${esc(Number(item.unitPrice ?? 0).toFixed(2))}" class="pos-edit-item-price w-28 rounded-lg px-2 py-2 text-xs"></td>
     <td class="p-2"><input aria-label="Line total" type="number" min="0" step="0.01" required value="${esc(item.lineTotal ?? 0)}" class="pos-edit-item-total w-28 rounded-lg px-2 py-2 text-xs"></td>
     <td class="p-2 text-center"><input aria-label="Loyalty free giveaway" type="checkbox" ${item.isLoyaltyFreeGiveaway ? 'checked' : ''} class="pos-edit-item-free accent-yellow-400"></td>
     <td class="p-2 text-right"><button type="button" onclick="this.closest('tr').remove()" class="rounded-lg px-2 py-1.5 text-red-300 hover:bg-red-500/20" aria-label="Remove item"><i class="fa-solid fa-trash-can"></i></button></td>`;
