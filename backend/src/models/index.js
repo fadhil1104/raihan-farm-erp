@@ -92,6 +92,38 @@ const Receivable = model('Receivable', new Schema({
   amount: Number, status: { type: String, enum: ['Pending', 'Collected'], default: 'Pending' }
 }, opts));
 
+const FarmAnimalType = model('FarmAnimalType', new Schema({
+  name: { type: String, required: true, trim: true },
+  normalizedName: { type: String, required: true, unique: true, trim: true }
+}, { timestamps: true }));
+
+const FarmBatch = model('FarmBatch', new Schema({
+  batchId: { type: String, required: true, unique: true },
+  animalTypeId: { type: String, required: true },
+  animalType: { type: String, required: true },
+  source: { type: String, enum: ['OWN_RAISED', 'PURCHASED'], required: true },
+  supplier: { type: String, default: '' },
+  purchaseAmountRs: { type: Number, default: 0 },
+  startDate: { type: String, required: true },
+  initialCount: { type: Number, required: true, min: 1 },
+  initialLiveWeightKg: { type: Number, required: true, min: 0 },
+  currentCount: { type: Number, required: true, min: 0 },
+  currentLiveWeightKg: { type: Number, required: true, min: 0 },
+  feedPurchasedKg: { type: Number, default: 0 },
+  feedUsedKg: { type: Number, default: 0 },
+  feedBalanceKg: { type: Number, default: 0 },
+  feedCostRs: { type: Number, default: 0 },
+  transportCostRs: { type: Number, default: 0 },
+  mortalityCount: { type: Number, default: 0 },
+  mortalityWeightKg: { type: Number, default: 0 },
+  deliveredCount: { type: Number, default: 0 },
+  deliveredWeightKg: { type: Number, default: 0 },
+  deliveredAmountRs: { type: Number, default: 0 },
+  measuredGainKg: { type: Number, default: 0 },
+  measuredLossKg: { type: Number, default: 0 },
+  events: { type: [Schema.Types.Mixed], default: [] }
+}, { timestamps: true }));
+
 const MonthlyHistory = model('MonthlyHistory', new Schema({
   ...base, month: String, year: String, kgSold: Number, posCashSales: Number,
   subBulkSales: Number, receivables: Number, expenses: Number
@@ -141,5 +173,6 @@ const collections = [
  */
 
 module.exports = {
-  collections, DailyVault, DailyPosCounter, InventoryItem, InventoryStockAddition, Staff, AttendanceLog, PosSale, CashierEntry, Customer, Receivable
+  collections, DailyVault, DailyPosCounter, InventoryItem, InventoryStockAddition, Staff, AttendanceLog, PosSale, CashierEntry, Customer, Receivable,
+  FarmAnimalType, FarmBatch
 };

@@ -25,6 +25,8 @@ Requirements: Node 18+ and MongoDB running on `localhost:27017` (or an Atlas URI
    ```
 
    Set a unique `JWT_SECRET`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD` in `backend/.env`.
+   Set `FARM_USERNAME=farm` and `FARM_PASSWORD` to the requested initial password
+   there as well; do not commit the `.env` file.
    Start the API with `npm start` (default: `http://localhost:5000`).
 
 2. In a separate terminal, run the React frontend:
@@ -52,6 +54,17 @@ records are not automatically deleted, except that existing employee records and
 their user/attendance references are migrated to staff and the legacy `employees`
 collection is dropped on backend startup. Non-admin user accounts without a staff
 record are also added to `staffs` with the default payroll settings.
+
+The farm-only account username defaults to `farm`. Set `FARM_PASSWORD` in the
+backend's private environment before first start to create it; the password is
+stored as a bcrypt hash and is not reset on restart. The requested initial password
+can be supplied through this environment variable; it is intentionally not stored
+in tracked source files. Change it from the farm dashboard after first login. For
+Docker, export `FARM_PASSWORD` before running Compose. The farm dashboard is
+available at `/farm`; its batches, animal types, feed,
+transport, mortality, weight checks, and live-animal deliveries are stored in
+separate farm collections. Deliveries are recorded for Raihan Chicken Shop but do
+not modify shop inventory, POS, or other shop records.
 
 ## Docker
 
@@ -81,6 +94,7 @@ reachable from the API host (for example, use MongoDB Atlas).
    * `JWT_SECRET`: a unique, long random secret
    * `ADMIN_USERNAME` and `ADMIN_PASSWORD`: the initial admin account
    * `ACCOUNTANT_USERNAME` and `ACCOUNTANT_PASSWORD`: the optional read-only accountant account (`accountant` is the default username)
+   * `FARM_USERNAME` and `FARM_PASSWORD`: credentials for the farm-only login (`farm` is the default username)
    * `CORS_ORIGIN`: the exact deployed Vercel origin, such as
      `https://your-project.vercel.app` (add any custom domain origins as needed)
    * `TIMEZONE`: `Asia/Colombo` if the default timezone is appropriate
@@ -109,6 +123,7 @@ The backend and MongoDB API remain independently runnable and deployable.
   changes (debounced) with `PUT /api/state`. Business data is stored in MongoDB.
 * The backend uses collections for inventory, sales, morning farm intakes, slaughter batches, staff,
   attendance, deliveries, subscriptions, receivables, history, and users.
+* Farm-only operations use separate animal-type, batch, and per-batch event collections.
 * The page polls the server every 20 seconds while the user is idle.
 
 | Method | Path | Access | Purpose |
@@ -121,6 +136,11 @@ The backend and MongoDB API remain independently runnable and deployable.
 | PATCH | `/api/auth/staff/:staffId/restore` | admin | Restore archived staff and reactivate their login |
 | PUT | `/api/auth/me` | staff token + current password | Update own name, phone number, and optionally password |
 | GET | `/api/state` | token | application state with role-based filtering |
+| GET | `/api/farm` | farm token | isolated animal types and farm batches |
+| POST | `/api/farm/animal-types` | farm token | add an animal type |
+| POST | `/api/farm/batches` | farm token | create an own-raised or outside-purchased batch |
+| POST | `/api/farm/batches/:batchId/events` | farm token | record feed, transport, mortality, live delivery, or weight check |
+| PUT | `/api/farm/password` | farm token | update the farm account password |
 | GET | `/api/state/pos-sales` | token | latest POS sales for background refresh |
 | PATCH | `/api/state/pos-sales/:id/payment` | admin | update a completed POS sale's payment method |
 | PUT | `/api/state` | token | sync state changes |

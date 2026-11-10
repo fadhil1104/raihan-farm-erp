@@ -24,6 +24,8 @@ services:
       TIMEZONE: Asia/Colombo
       SEED_ON_START: "true"
       CORS_ORIGIN: http://localhost:8080,http://127.0.0.1:8080
+      FARM_USERNAME: ${FARM_USERNAME:-farm}
+      FARM_PASSWORD: ${FARM_PASSWORD:-}
 
   frontend:
     build:

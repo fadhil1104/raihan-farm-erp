@@ -1,26 +1,25 @@
 const router = require('express').Router();
 const { collections, DailyVault, DailyPosCounter, InventoryItem, InventoryStockAddition, CashierEntry, PosSale, Customer, Receivable } = require('../models');
-const { requireAuth, requireAdmin, requireWriter, requireStateWriter } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requireWriter } = require('../middleware/auth');
 const { todayStr } = require('../utils/time');
 const { randomUUID } = require('node:crypto');
+
+router.use(requireAuth, (req, res, next) => {
+  if (req.user.role === 'farm') {
+    return res.status(403).json({ error: 'Farm accounts cannot access shop records.' });
+  }
+  next();
+});
 
 const META = ['_id', '__v', 'uid', 'seq', 'createdAt', 'updatedAt', 'signInAt'];
 const clean = (doc) => { META.forEach((k) => delete doc[k]); return doc; };
 
 async function buildState(role) {
   const entries = await Promise.all(collections.map(async (c) => {
-    if (role === 'farm' && !['farmIntakes', 'slaughterBatches'].includes(c.key)) {
-      return [c.key, []];
-    }
     const rows = await c.Model.find().sort(c.sortNewest ? { createdAt: -1, _id: -1 } : { seq: 1 }).lean();
     return [c.key, rows.map(clean)];
   }));
   const state = Object.fromEntries(entries);
-  if (role === 'farm') {
-    state.inventory = (await InventoryItem.find().select('id name source unitType').lean())
-      .filter((item) => (item.unitType || 'kg') === 'kg')
-      .map(({ id, name, source, unitType }) => ({ id, name, source, unitType: unitType || 'kg' }));
-  }
   if (role === 'staff') {
     // Staff never receives PINs, payroll or attendance
     state.staff = state.staff.filter((member) => !member.archivedAt)
@@ -29,9 +28,7 @@ async function buildState(role) {
     state.attendanceLogs = [];
   }
   state.dailyVault = {};
-  if (role !== 'farm') {
-    (await DailyVault.find().lean()).forEach((d) => { state.dailyVault[d.date] = clean(d); });
-  }
+  (await DailyVault.find().lean()).forEach((d) => { state.dailyVault[d.date] = clean(d); });
   return state;
 }
 
@@ -391,14 +388,11 @@ async function refreshSaleCustomerLoyalty(phoneNumbers) {
 }
 
 // GET /api/state -> whole app state (same shape the old localStorage object had)
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', async (req, res) => {
   res.json(await buildState(req.user.role));
 });
 
-router.get('/pos-sales', requireAuth, async (req, res) => {
-  if (req.user.role === 'farm') {
-    return res.status(403).json({ error: 'Farm accounts cannot access POS sales' });
-  }
+router.get('/pos-sales', async (req, res) => {
   const sales = await PosSale.find()
     .sort({ createdAt: -1, _id: -1 })
     .select('-_id -__v -uid -seq -createdAt -updatedAt')
@@ -408,13 +402,12 @@ router.get('/pos-sales', requireAuth, async (req, res) => {
 
 // PUT /api/state -> sync app state; staff inventory stock is changed only by stock additions and POS sales.
 // ?replace=true (admin) makes the database exactly match the payload - used by "Restore Backup"
-router.put('/', requireAuth, requireStateWriter, async (req, res) => {
+router.put('/', requireWriter, async (req, res) => {
   const body = req.body || {};
   const isAdmin = req.user.role === 'admin';
-  const isFarmUser = req.user.role === 'farm';
   const replace = isAdmin && req.query.replace === 'true';
   const newlyCreatedSales = [];
-  if (!isFarmUser && !replace && Array.isArray(body.posSales)) {
+  if (!replace && Array.isArray(body.posSales)) {
     const sales = body.posSales.filter((sale) => sale && sale.id !== undefined && sale.id !== null);
     const existingSales = await PosSale.find({ id: { $in: sales.map((sale) => String(sale.id)) } })
       .select('id')
@@ -430,8 +423,7 @@ router.put('/', requireAuth, requireStateWriter, async (req, res) => {
     }
   }
   for (const c of collections) {
-    if (isFarmUser && !['farmIntakes', 'slaughterBatches'].includes(c.key)) continue;
-    if (c.adminOnly && !isAdmin && !(isFarmUser && ['farmIntakes', 'slaughterBatches'].includes(c.key))) continue;
+    if (c.adminOnly && !isAdmin) continue;
     if (c.key === 'cashierEntries' && !replace) continue;
     if (c.key === 'inventory' && !isAdmin) continue;
     const records = c.key === 'staff' ? (body.staff ?? body.employees) : body[c.key];
@@ -452,7 +444,7 @@ router.put('/', requireAuth, requireStateWriter, async (req, res) => {
     }
   }
   if (newlyCreatedSales.length) await deductSoldInventory(newlyCreatedSales);
-  if (!isFarmUser && body.dailyVault && typeof body.dailyVault === 'object') {
+  if (body.dailyVault && typeof body.dailyVault === 'object') {
     const ops = Object.entries(body.dailyVault).map(([date, day]) => {
       const dailyRecord = { ...day, date, uid: date };
       if (!isAdmin) delete dailyRecord.inventoryAdjustments;
@@ -472,7 +464,7 @@ router.put('/', requireAuth, requireStateWriter, async (req, res) => {
   });
 });
 
-router.post('/inventory/adjustments', requireAuth, requireWriter, async (req, res) => {
+router.post('/inventory/adjustments', requireWriter, async (req, res) => {
   const itemId = String(req.body?.itemId || '');
   const direction = String(req.body?.direction || '');
   const quantityRaw = req.body?.quantity;
@@ -592,7 +584,7 @@ router.post('/inventory/adjustments', requireAuth, requireWriter, async (req, re
   res.status(201).json({ date, stockKg: updatedItem.stockKg, adjustment });
 });
 
-router.post('/cashier-entries', requireAuth, requireWriter, async (req, res) => {
+router.post('/cashier-entries', requireWriter, async (req, res) => {
   const { type } = req.body || {};
   const date = String(req.body?.date || '');
   const amount = Number(req.body?.amount);
@@ -722,7 +714,7 @@ router.post('/cashier-entries', requireAuth, requireWriter, async (req, res) => 
   }
 });
 
-router.put('/cashier-entries/:id', requireAuth, requireWriter, async (req, res) => {
+router.put('/cashier-entries/:id', requireWriter, async (req, res) => {
   const entry = await CashierEntry.findOne({ id: req.params.id });
   if (!entry || entry.type !== 'EXTRA_CASH') {
     return res.status(404).json({ error: 'Extra-cash entry not found.' });
@@ -747,7 +739,7 @@ router.put('/cashier-entries/:id', requireAuth, requireWriter, async (req, res) 
   res.json({ entry: clean(updated.toObject()) });
 });
 
-router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
+router.put('/pos-sales/:id', requireAdmin, async (req, res) => {
   const sale = await PosSale.findOne({ id: req.params.id });
   if (!sale) return res.status(404).json({ error: 'POS sale not found' });
 
@@ -905,7 +897,7 @@ router.put('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ sale: clean(updatedSale.toObject()) });
 });
 
-router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, res) => {
+router.patch('/pos-sales/:id/payment', requireAdmin, async (req, res) => {
   const payment = String(req.body?.payment || '');
   const validPayments = ['CASH', 'CARD', 'QR / TRANSFER', 'CREDIT'];
   if (!validPayments.includes(payment)) {
@@ -978,7 +970,7 @@ router.patch('/pos-sales/:id/payment', requireAuth, requireAdmin, async (req, re
   });
 });
 
-router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
+router.delete('/pos-sales/:id', requireAdmin, async (req, res) => {
   const sale = await PosSale.findOne({ id: req.params.id });
   if (!sale) return res.status(404).json({ error: 'POS sale not found' });
 
@@ -1044,10 +1036,7 @@ router.delete('/pos-sales/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, deletedSale: clean(sale.toObject()), restoredInventoryItems: itemIds.length });
 });
 
-router.get('/inventory/stock-additions', requireAuth, async (req, res) => {
-  if (req.user.role === 'farm') {
-    return res.status(403).json({ error: 'Farm accounts cannot access inventory stock additions' });
-  }
+router.get('/inventory/stock-additions', async (req, res) => {
   const date = String(req.query.date || '');
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
@@ -1061,7 +1050,7 @@ router.get('/inventory/stock-additions', requireAuth, async (req, res) => {
   res.json({ date, additions });
 });
 
-router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
+router.put('/inventory/:id', requireAdmin, async (req, res) => {
   const item = await InventoryItem.findOne({ id: req.params.id });
   if (!item) return res.status(404).json({ error: 'Inventory item not found.' });
 
@@ -1069,10 +1058,7 @@ router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
   const stockField = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
   const priceField = unitType === 'kg' ? 'pricePerKg' : 'pricePerUnit';
   const expectedStock = req.body?.expectedStock;
-  const requestedStock = req.body?.[stockField];
-  const stock = unitType === 'kg' && typeof requestedStock === 'number' && Number.isFinite(requestedStock)
-    ? Number(requestedStock.toFixed(2))
-    : requestedStock;
+  const stock = req.body?.[stockField];
   const price = req.body?.[priceField];
   const name = String(req.body?.name || '').trim();
   const source = String(req.body?.source || '').trim();
@@ -1097,7 +1083,7 @@ router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ item: clean(updated.toObject()) });
 });
 
-router.post('/inventory/:id/stock', requireAuth, requireWriter, async (req, res) => {
+router.post('/inventory/:id/stock', requireWriter, async (req, res) => {
   const item = await InventoryItem.findOne({ id: req.params.id });
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
 

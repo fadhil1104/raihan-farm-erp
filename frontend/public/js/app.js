@@ -26,8 +26,6 @@ const phoneKey = (phone) => {
   return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
 };
 const isAccountant = () => currentUser?.role === 'accountant';
-const isFarmUser = () => currentUser?.role === 'farm';
-const canManageFarmRecords = () => currentUser?.role === 'admin' || isFarmUser();
 const accountantReadOnlyActions = /^(switchTab|logout|print|download|close|setArchiveGranularity|setPosIncomePeriod|updatePosIncomeDateFilter|selectCashierDate|renderAnnualAnalytics|renderAttendanceLogs|renderCalendarDayInspector|renderInventoryCards|renderPosSalesHistory|searchPosProducts|togglePosProductList|pullFromServer|refreshPosSales|exportLifetimeBackup|loadInventoryStockAdditions|openPayslipModal|openAnnualReportModal|openPosPrintOptions)/;
 
 function showToast(message, type = 'success') {
@@ -1099,27 +1097,31 @@ async function handleLogin() {
   let authenticated = false;
   try {
     const res = await Api.login(u, p);
+    if (res.user?.role === 'farm') {
+      localStorage.setItem('raihan_farm_token', res.token);
+      $('login-password').value = '';
+      window.location.assign('/farm');
+      return;
+    }
     Api.setToken(res.token);
     currentUser = res.user;
     authenticated = true;
     updateRoleSidebar();
-    switchTab(currentUser.role === 'staff' ? 'pos' : isFarmUser() ? 'slaughter' : 'dashboard');
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
     $('login-password').value = '';
     savePending = false;
     state = await Api.getState();
     ensureStateCollections();
     syncTodayIntoDailyVault();
     applyRolePermissions();
-    switchTab(currentUser.role === 'staff' ? 'pos' : isFarmUser() ? 'slaughter' : 'dashboard');
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
     $('login-modal').classList.add('hidden');
     setSyncStatus('Connected to MongoDB');
     showToast(currentUser.role === 'admin'
       ? 'Welcome Admin! Full dashboard, reports, and inventory controls unlocked.'
       : currentUser.role === 'accountant'
         ? 'Logged in as Accountant: full records are available in read-only mode.'
-        : isFarmUser()
-          ? 'Logged in as Farm: farm intake and slaughter access enabled.'
-          : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.',
+        : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.',
     currentUser.role === 'staff' ? 'info' : 'success');
   } catch (err) {
     if (authenticated) {
@@ -1159,19 +1161,14 @@ function applyRolePermissions() {
 
 function updateRoleSidebar() {
   const isAdmin = currentUser && currentUser.role === 'admin';
-  const isFarm = isFarmUser();
   const canViewAdminPages = isAdmin || isAccountant();
   $('active-user-label').innerText = currentUser ? currentUser.label : 'Not signed in';
   $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5'
-    : isAccountant() ? 'text-xs font-extrabold text-violet-300 mt-0.5'
-      : isFarm ? 'text-xs font-extrabold text-emerald-300 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
-  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : isAccountant() ? 'bg-violet-400' : isFarm ? 'bg-emerald-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
+    : isAccountant() ? 'text-xs font-extrabold text-violet-300 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
+  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : isAccountant() ? 'bg-violet-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
   $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>'
-    : isAccountant() ? '<i class="fa-solid fa-eye"></i>'
-      : isFarm ? '<i class="fa-solid fa-wheat-awn"></i>' : '<i class="fa-solid fa-cash-register"></i>';
+    : isAccountant() ? '<i class="fa-solid fa-eye"></i>' : '<i class="fa-solid fa-cash-register"></i>';
   document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !canViewAdminPages));
-  document.querySelectorAll('.farm-access-nav').forEach((el) => el.classList.toggle('hidden', !isAdmin && !isFarm));
-  ['nav-inventory', 'nav-pos', 'nav-deliveries'].forEach((id) => $(id)?.classList.toggle('hidden', isFarm));
   $('pos-billing-terminal')?.classList.toggle('hidden', isAccountant());
   $('pos-close-shop')?.classList.toggle('hidden', isAccountant());
   let number = 0;
@@ -1185,7 +1182,6 @@ function updateRoleSidebar() {
 
 function switchTab(tabId) {
   const adminOnlyTabs = ['dashboard', 'slaughter', 'attendance', 'payroll', 'coa'];
-  if (isFarmUser() && tabId !== 'slaughter') tabId = 'slaughter';
   if (currentUser?.role === 'staff' && adminOnlyTabs.includes(tabId)) {
     showToast('Access Restricted: Staff can access POS, Dressed Inventory, and Deliveries & Weekly Subs.', 'error');
     tabId = 'pos';
@@ -1476,7 +1472,7 @@ function dateTimeLocalValue(value) {
 }
 
 function openSlaughterEdit(id) {
-  if (!canManageFarmRecords()) return showToast('Only an admin or farm account can edit farm and slaughter records.', 'error');
+  if (!currentUser || currentUser.role !== 'admin') return showToast('Only an admin can edit farm and slaughter records.', 'error');
   const batch = state.slaughterBatches.find((entry) => entry.id === id);
   if (!batch) return showToast('Slaughter batch not found.', 'error');
   $('edit-batch-id').value = batch.id;
@@ -1511,7 +1507,7 @@ function updateBatchVault(oldBatch, newBatch) {
 }
 
 function saveSlaughterEdit() {
-  if (!canManageFarmRecords()) return showToast('Only an admin or farm account can edit farm and slaughter records.', 'error');
+  if (!currentUser || currentUser.role !== 'admin') return showToast('Only an admin can edit farm and slaughter records.', 'error');
   const batch = state.slaughterBatches.find((entry) => entry.id === $('edit-batch-id').value);
   if (!batch) return showToast('Slaughter batch not found.', 'error');
   const count = Number($('edit-batch-count').value), liveKg = Number($('edit-batch-live').value);
@@ -1586,10 +1582,7 @@ async function submitInventoryEdit(id) {
   }
 
   const newPrice = Number($(`inv-price-${id}`).value);
-  const enteredStock = Number($(`inv-stock-${id}`).value);
-  const newStock = inventoryUnit(item) === 'kg' && Number.isFinite(enteredStock)
-    ? Number(enteredStock.toFixed(2))
-    : enteredStock;
+  const newStock = Number($(`inv-stock-${id}`).value);
   const wholesaleInput = $(`inv-wholesale-${id}`);
   const newWholesale = wholesaleInput ? Number(wholesaleInput.value || 0) : Number(item.wholesalePrice || 0);
   const nameInput = $(`inv-name-${id}`), sourceInput = $(`inv-source-${id}`);
@@ -3613,11 +3606,10 @@ function renderInventoryCards() {
       ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items start with that search text.</div>'
       : items.map((item) => {
     const unit = inventoryUnit(item), priceLabel = inventoryPriceLabel(item);
-    const stockStep = unit === 'kg' ? '0.01' : '1';
-    const stockValue = unit === 'kg' ? Number(inventoryStock(item).toFixed(2)) : inventoryStock(item);
+    const stockStep = unit === 'kg' ? '0.1' : '1';
         const priceAndStockControls = isAdmin
           ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${stockValue}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
+              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
           : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
               ${isStaff ? `<div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>` : ''}`;
         return `
@@ -3750,7 +3742,6 @@ function renderSlaughterProducts() {
 function renderAll() {
   if (!state) return;
   const isAdmin = currentUser && currentUser.role === 'admin';
-  const canEditFarmRecords = canManageFarmRecords();
   const activeStaff = state.staff.filter((member) => !member.archivedAt);
   const archivedStaff = state.staff.filter((member) => member.archivedAt);
   const manDate = $('man-date');
@@ -3837,7 +3828,7 @@ function renderAll() {
 
   // Slaughter table
   $('slaughter-tbody').innerHTML = state.slaughterBatches.length === 0
-    ? `<tr><td colspan="${canEditFarmRecords ? 14 : 13}" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>`
+    ? `<tr><td colspan="${isAdmin ? 14 : 13}" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>`
     : state.slaughterBatches.map((b) => {
     const optimal = b.wastePct <= 31;
     const outputs = batchOutputs(b);
@@ -3856,7 +3847,7 @@ function renderAll() {
         <td class="py-3 px-3 font-black text-emerald-400">+${Number(b.actualKg || 0).toFixed(2)} kg</td>
         <td class="py-3 px-3"><span class="font-bold text-red-400">${Number(b.wasteKg).toFixed(1)} kg</span><span class="text-xs text-slate-400 block">(${Number(b.wastePct).toFixed(1)}% waste)</span></td>
         <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold ${optimal ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">${optimal ? 'Optimal Yield (~30%)' : 'High Waste Alert'}</span></td>
-        ${canEditFarmRecords ? `<td class="py-3 px-3"><button onclick="openSlaughterEdit('${esc(b.id)}')" class="bg-slate-800 hover:bg-yellow-400 hover:text-slate-950 text-yellow-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button></td>` : ''}
+        ${isAdmin ? `<td class="py-3 px-3"><button onclick="openSlaughterEdit('${esc(b.id)}')" class="bg-slate-800 hover:bg-yellow-400 hover:text-slate-950 text-yellow-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button></td>` : ''}
       </tr>`;
   }).join('');
 
