@@ -35,12 +35,6 @@ async function request(path, { method = 'GET', body, token } = {}) {
     throw new Error(`Cannot reach the server at ${API_BASE || window.location.origin}.`);
   }
   const data = await response.json().catch(() => ({}));
-  if (response.status === 404) {
-    const apiOrigin = API_BASE || window.location.origin;
-    throw Object.assign(new Error(
-      `The API endpoint was not found at ${apiOrigin}. Deploy the updated backend and set VITE_API_BASE in Vercel to the public backend origin, then redeploy the frontend.`
-    ), { status: 404 });
-  }
   if (!response.ok) throw Object.assign(new Error(data.error || `Request failed (${response.status}).`), { status: response.status });
   return data;
 }
