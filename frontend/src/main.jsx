@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import legacyHtml from '../legacy.html?raw';
-import FarmApp from './FarmApp';
 import '../css/styles.css';
 
+localStorage.removeItem('raihan_erp_token');
 window.RAIHAN_API_BASE = import.meta.env.VITE_API_BASE || '';
 
 function LegacyApp() {
@@ -58,12 +58,4 @@ function LegacyApp() {
   return <div dangerouslySetInnerHTML={{ __html: markup }} />;
 }
 
-const app = window.location.pathname.replace(/\/+$/, '') === '/farm'
-  ? <FarmApp />
-  : <LegacyApp />;
-
-if (window.location.pathname.replace(/\/+$/, '') !== '/farm') {
-  localStorage.removeItem('raihan_erp_token');
-}
-
-createRoot(document.getElementById('root')).render(app);
+createRoot(document.getElementById('root')).render(<LegacyApp />);

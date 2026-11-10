@@ -27,13 +27,17 @@ const requireAdmin = (req, res, next) =>
   req.user && req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admin access required' });
 
 const requireWriter = (req, res, next) =>
+  req.user && !['accountant', 'farm'].includes(req.user.role)
+    ? next()
+    : res.status(403).json({
+      error: req.user?.role === 'farm'
+        ? 'Farm accounts can only update farm and slaughter records'
+        : 'Accountant accounts have read-only access'
+    });
+
+const requireStateWriter = (req, res, next) =>
   req.user && req.user.role !== 'accountant'
     ? next()
     : res.status(403).json({ error: 'Accountant accounts have read-only access' });
 
-const requireFarm = (req, res, next) =>
-  req.user && req.user.role === 'farm'
-    ? next()
-    : res.status(403).json({ error: 'Farm account access required' });
-
-module.exports = { signToken, requireAuth, requireAdmin, requireWriter, requireFarm };
+module.exports = { signToken, requireAuth, requireAdmin, requireWriter, requireStateWriter };

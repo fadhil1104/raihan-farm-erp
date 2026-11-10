@@ -1,6 +1,5 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
-const { FarmAnimalType } = require('../models');
 
 async function ensureUsers() {
   const adminUsername = process.env.ADMIN_USERNAME;
@@ -75,28 +74,15 @@ async function ensureFarmUser() {
     username,
     passwordHash: await bcrypt.hash(password, 10),
     role: 'farm',
-    label: 'Raihan Farm'
+    label: 'Farm & Slaughter'
   });
   console.log(`Created farm user: ${username}`);
-}
-
-async function ensureFarmAnimalTypes() {
-  const names = ['Broiler Chicken', 'Duck', 'Quail', 'Turkey', 'Farm Chicken', 'Parent Chicken'];
-  await Promise.all(names.map((name) => {
-    const normalizedName = name.toLowerCase();
-    return FarmAnimalType.updateOne(
-      { normalizedName },
-      { $setOnInsert: { name, normalizedName } },
-      { upsert: true }
-    );
-  }));
 }
 
 async function seedDatabase() {
   await ensureUsers();
   await ensureAccountant();
   await ensureFarmUser();
-  await ensureFarmAnimalTypes();
   console.log('User setup complete. No demo business data was added.');
 }
 
