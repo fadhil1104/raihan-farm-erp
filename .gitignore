@@ -2,4 +2,3 @@ node_modules/
 .env
 *.log
 /frontend/dist/
-/public/

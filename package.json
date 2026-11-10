@@ -1,10 +1,6 @@
 {
   "name": "raihan-farm-erp",
   "private": true,
-  "workspaces": [
-    "backend",
-    "frontend"
-  ],
   "scripts": {
     "install:backend": "npm --prefix backend install",
     "install:frontend": "npm --prefix frontend install",
@@ -13,7 +9,6 @@
     "dev": "npm run dev:backend",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "build": "npm run build:frontend && node scripts/prepare-vercel-static.js",
     "build:frontend": "npm --prefix frontend run build",
     "seed": "npm --prefix backend run seed"
   }

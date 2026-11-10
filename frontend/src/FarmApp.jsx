@@ -38,7 +38,7 @@ async function request(path, { method = 'GET', body, token } = {}) {
   if (response.status === 404) {
     const apiOrigin = API_BASE || window.location.origin;
     throw Object.assign(new Error(
-      `The API endpoint was not found at ${apiOrigin}. Confirm the existing Vercel project uses the repository root and redeploy the combined frontend/API.`
+      `The API endpoint was not found at ${apiOrigin}. Deploy the updated backend and set VITE_API_BASE in Vercel to the public backend origin, then redeploy the frontend.`
     ), { status: 404 });
   }
   if (!response.ok) throw Object.assign(new Error(data.error || `Request failed (${response.status}).`), { status: response.status });
