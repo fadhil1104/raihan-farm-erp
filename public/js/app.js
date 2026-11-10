@@ -1,0 +1,4040 @@
+/* =====================================================================
+   Raihan Farm Shop ERP & POS - frontend logic
+   Data is loaded from / saved to the Node + MongoDB backend (see js/api.js)
+   ===================================================================== */
+
+// ---------- helpers ----------
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const getTodayDate = () => fmtDate(new Date());
+const getTomorrowDate = () => { const d = new Date(); d.setDate(d.getDate() + 1); return fmtDate(d); };
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const $ = (id) => document.getElementById(id);
+const inventoryUnit = (item) => item.unitType || 'kg';
+const inventoryStock = (item) => inventoryUnit(item) === 'kg' ? Number(item.stockKg || 0) : Number(item.stockQuantity || 0);
+const inventoryPrice = (item) => inventoryUnit(item) === 'kg' ? Number(item.pricePerKg || 0) : Number(item.pricePerUnit || 0);
+const inventoryMinStock = (item) => inventoryUnit(item) === 'kg' ? Number(item.minStockKg || 0) : Number(item.minStockQuantity || 0);
+const inventoryUnitLabel = (item) => inventoryUnit(item) === 'kg' ? 'kg'
+  : inventoryUnit(item) === 'packet' ? `${Number(item.packWeightGrams || 0)}g packet` : (item.unitLabel || 'unit');
+const inventoryPriceLabel = (item) => inventoryUnit(item) === 'kg' ? 'per kg' : `per ${inventoryUnitLabel(item)}`;
+const inventoryStockText = (item, digits = 0) => `${inventoryStock(item).toFixed(digits)} ${inventoryUnitLabel(item)}${inventoryUnit(item) === 'packet' || inventoryUnit(item) === 'unit' ? (inventoryStock(item) === 1 ? '' : 's') : ''}`;
+const batchOutputs = (batch) => Array.isArray(batch.outputs) && batch.outputs.length
+  ? batch.outputs
+  : (batch.categoryId ? [{ categoryId: batch.categoryId, categoryName: batch.categoryName, actualKg: Number(batch.actualKg || 0) }] : []);
+const phoneKey = (phone) => {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits.startsWith('94') && digits.length === 11 ? `0${digits.slice(2)}` : digits;
+};
+const isAccountant = () => currentUser?.role === 'accountant';
+const accountantReadOnlyActions = /^(switchTab|logout|print|download|close|setArchiveGranularity|setPosIncomePeriod|updatePosIncomeDateFilter|selectCashierDate|renderAnnualAnalytics|renderAttendanceLogs|renderCalendarDayInspector|renderInventoryCards|renderPosSalesHistory|searchPosProducts|togglePosProductList|pullFromServer|refreshPosSales|exportLifetimeBackup|loadInventoryStockAdditions|openPayslipModal|openAnnualReportModal|openPosPrintOptions)/;
+
+function showToast(message, type = 'success') {
+  const container = $('toast-container');
+  const toast = document.createElement('div');
+  const colorClass = type === 'error' ? 'bg-red-950 border-red-500 text-red-200'
+    : type === 'info' ? 'bg-slate-900 border-yellow-400 text-yellow-300'
+    : 'bg-slate-900 border-emerald-500 text-emerald-300';
+  const iconClass = type === 'error' ? 'fa-circle-exclamation text-red-400'
+    : type === 'info' ? 'fa-wheat-awn text-yellow-400'
+    : 'fa-circle-check text-emerald-400';
+  toast.className = `pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl border shadow-2xl text-xs font-bold transition-all duration-300 ${colorClass}`;
+  toast.innerHTML = `<i class="fa-solid ${iconClass} text-base"></i><span>${esc(message)}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3200);
+}
+
+// ---------- application state ----------
+let state = null;                       // loaded from the API after login
+let currentUser = null;                 // { username, role, label }
+let selectedPosCategoryId = null;
+let posCart = [];
+let showAllPosProducts = false;
+let pendingPosSale = null;
+let pendingReceiptRedemptionSaleId = null;
+let activeReceiptPrintSaleId = null;
+let receiptPrintStyle = null;
+let receiptPrintOriginalStyle = null;
+let editingStaffId = null;
+let editingPosSaleId = null;
+let inventoryStockAdditions = null;
+let inventoryStockAdditionsDate = '';
+let inventoryStockAdditionsRequestId = 0;
+const LOYALTY_POINTS_PER_REWARD = 50;
+const LOYALTY_REWARD_KG = 0.5;
+let posIncomePeriod = 'DAY';
+let posIncomeDate = getTodayDate();
+let posIncomeMonth = getTodayDate().slice(0, 7);
+let posIncomeYear = String(new Date().getFullYear());
+let cashierSelectedDate = getTodayDate();
+let cashierAutoTodayDate = getTodayDate();
+let editingCashierExtraEntryId = null;
+let archiveGranularity = 'DATE';        // DATE | WEEKLY | MONTHLY | YEARLY | LIFETIME
+let selectedArchiveDate = getTodayDate();
+let archiveDateRange = null;
+let deferredPwaPrompt = null;
+let qrRoster = [];
+
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPwaPrompt = e; });
+
+const todaysPosSales = () => {
+  const today = getTodayDate();
+  return (state.posSales || []).filter((s) => s.date === today);
+};
+
+function setPosIncomePeriod(period) {
+  posIncomePeriod = period;
+  renderPosSalesHistory();
+}
+
+function updatePosIncomeDateFilter() {
+  posIncomeDate = $('pos-income-date').value || posIncomeDate;
+  posIncomeMonth = $('pos-income-month').value || posIncomeMonth;
+  posIncomeYear = $('pos-income-year').value || posIncomeYear;
+  renderPosSalesHistory();
+}
+
+function getPosSaleTimestamp(sale) {
+  const date = String(sale.date || '');
+  const time = String(sale.time || '00:00').trim();
+  const match = time.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !match) return null;
+
+  let hours = Number(match[1]);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return null;
+    hours = (hours % 12) + (meridiem === 'PM' ? 12 : 0);
+  }
+  if (hours > 23 || Number(match[2]) > 59) return null;
+  const timestamp = new Date(`${date}T${pad2(hours)}:${match[2]}:00`).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function getPosIncomeSales() {
+  if (!state) return [];
+  const now = Date.now();
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  return (state.posSales || []).filter((sale) => {
+    const date = String(sale.date || '');
+    if (posIncomePeriod === 'DAY') return date === getTodayDate();
+    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
+    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
+    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
+    const timestamp = getPosSaleTimestamp(sale);
+    return timestamp !== null && timestamp <= now && timestamp >= now - windowMs;
+  });
+}
+
+function getPosIncomeExtraCashEntries() {
+  if (!state) return [];
+  const now = Date.now();
+  const windowMs = 7 * 24 * 60 * 60 * 1000;
+  return (state.cashierEntries || []).filter((entry) => {
+    if (entry.type !== 'EXTRA_CASH') return false;
+    const date = String(entry.date || '');
+    if (posIncomePeriod === 'DAY') return date === getTodayDate();
+    if (posIncomePeriod === 'DATE') return date === posIncomeDate;
+    if (posIncomePeriod === 'MONTH') return date.slice(0, 7) === posIncomeMonth;
+    if (posIncomePeriod === 'YEAR') return date.slice(0, 4) === posIncomeYear;
+    const timestamp = new Date(`${date}T00:00:00`).getTime();
+    return !Number.isNaN(timestamp) && timestamp <= now && timestamp >= now - windowMs;
+  });
+}
+
+function renderPosSalesHistory() {
+  if (!state) return;
+  const periodSelect = $('pos-income-period');
+  const dateInput = $('pos-income-date');
+  const monthInput = $('pos-income-month');
+  const yearInput = $('pos-income-year');
+  const dateFilter = $('pos-income-date-filter');
+  const monthFilter = $('pos-income-month-filter');
+  const yearFilter = $('pos-income-year-filter');
+  if (periodSelect) periodSelect.value = posIncomePeriod;
+  if (dateInput && dateInput.value !== posIncomeDate) dateInput.value = posIncomeDate;
+  if (monthInput && monthInput.value !== posIncomeMonth) monthInput.value = posIncomeMonth;
+  if (yearInput && yearInput.value !== posIncomeYear) yearInput.value = posIncomeYear;
+  dateFilter?.classList.toggle('hidden', posIncomePeriod !== 'DATE');
+  monthFilter?.classList.toggle('hidden', posIncomePeriod !== 'MONTH');
+  yearFilter?.classList.toggle('hidden', posIncomePeriod !== 'YEAR');
+
+  const sales = getPosIncomeSales();
+
+  let cashIncome = 0;
+  let extraCashIncome = 0;
+  let cardIncome = 0;
+  const extraCashEntries = getPosIncomeExtraCashEntries();
+  sales.forEach((sale) => {
+    const payment = String(sale.payment || '').toUpperCase();
+    if (payment === 'CASH') {
+      cashIncome += Number(sale.totalRs) || 0;
+      extraCashIncome += Number(sale.extraCashKeptRs) || 0;
+    }
+    else if (payment === 'CARD' || payment === 'QR / TRANSFER') cardIncome += Number(sale.totalRs) || 0;
+  });
+  extraCashIncome += extraCashEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  $('pos-income-cash').innerText = `Rs. ${cashIncome.toLocaleString()}`;
+  $('pos-income-extra-cash').innerText = `Rs. ${extraCashIncome.toLocaleString()}`;
+  $('pos-income-card').innerText = `Rs. ${cardIncome.toLocaleString()}`;
+  $('pos-income-total').innerText = `Rs. ${(cashIncome + extraCashIncome + cardIncome).toLocaleString()}`;
+
+  const canManageSales = currentUser?.role === 'admin';
+  const periodLabel = posIncomePeriod === 'DAY' ? 'Current Day'
+    : posIncomePeriod === 'DATE' ? `Sales for ${posIncomeDate}`
+    : posIncomePeriod === 'WEEK' ? 'Past 7 Days'
+    : posIncomePeriod === 'MONTH' ? `Month of ${posIncomeMonth}`
+    : `Year ${posIncomeYear}`;
+  $('pos-income-period-label').innerText = `${periodLabel} — Total Collected`;
+  $('pos-history-heading').innerText = `${periodLabel} — Completed POS Transactions`;
+  $('pos-history-tbody').innerHTML = sales.length === 0
+    ? `<tr><td colspan="7" class="py-6 text-center text-sm text-slate-400">No POS sales found for ${esc(periodLabel)}.</td></tr>`
+    : sales.map((p) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td data-label="Receipt"><span class="font-bold text-yellow-400">${esc(p.id)}</span><span class="text-xs text-slate-400 block">${esc(p.date)} ${esc(p.time)}</span></td>
+      <td data-label="Customer" class="font-semibold text-white">${esc(p.customer)}${p.customerPhone ? `<span class="text-xs text-slate-400 block">${esc(p.customerPhone)}</span>` : ''}${p.delivery ? `<span class="mt-1 inline-block rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">Delivery · Rs. ${Number(p.deliveryFeeRs || 0).toLocaleString()}</span>` : ''}</td>
+      <td data-label="Items sold" class="text-slate-300 text-xs">${posSaleItemsHtml(p)}</td>
+      <td data-label="Meat weight" class="font-bold text-emerald-400">${Number(p.totalKg) > 0 ? `-${Number(p.totalKg).toFixed(2)} kg` : '—'}</td>
+      <td data-label="Payment"><span class="px-2 py-0.5 rounded bg-slate-800 text-xs font-bold">${esc(p.payment)}</span></td>
+      <td data-label="Net total" class="font-black text-white">Rs. ${Number(p.totalRs).toLocaleString()}${Number(p.extraCashKeptRs) > 0 ? `<span class="mt-1 block text-xs font-semibold text-emerald-300">Extra cash kept: Rs. ${Number(p.extraCashKeptRs).toLocaleString()} · ${esc(p.extraCashReason || 'No reason provided')}</span>` : ''}</td>
+      <td data-label="Actions" class="text-right whitespace-nowrap">
+        <button type="button" onclick="printPosSale(${esc(JSON.stringify(String(p.id)))})" class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-bold text-emerald-300 transition hover:bg-emerald-400 hover:text-slate-950"><i class="fa-solid fa-print mr-1"></i>Print</button>
+        ${canManageSales ? `<button type="button" onclick="editPosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1.5 text-xs font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-slate-950"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button>
+        <button type="button" onclick="deletePosSale(${esc(JSON.stringify(String(p.id)))})" class="ml-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500 hover:text-white"><i class="fa-solid fa-trash-can mr-1"></i>Delete</button>` : ''}</td>
+    </tr>`).join('');
+  renderCashierDrawer();
+}
+
+function printPosSale(saleId) {
+  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
+  if (!sale) return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+
+  renderPosSaleReceipt(sale);
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.remove('hidden');
+  pendingReceiptRedemptionSaleId = !isAccountant()
+    && Number(sale.loyaltyPointsRedeemed || 0) > 0 && !sale.loyaltyRedemptionPrinted
+    ? sale.id : null;
+  $('receipt-close-button').classList.toggle('hidden', Boolean(pendingReceiptRedemptionSaleId));
+  $('receipt-print-button').innerText = pendingReceiptRedemptionSaleId
+    ? 'Print Receipt & Redeem Points' : 'Print Thermal Receipt';
+  $('receipt-modal').classList.remove('hidden');
+  printSection('receipt-print-area');
+}
+
+function getDailyCustomerNumber(sale) {
+  const savedNumber = Number(sale.dailyCustomerNumber);
+  if (Number.isInteger(savedNumber) && savedNumber > 0) return savedNumber;
+  const daySales = (state?.posSales || []).filter((entry) => entry.date === sale.date);
+  const saleIndex = daySales.findIndex((entry) => String(entry.id) === String(sale.id));
+  return saleIndex >= 0 ? daySales.length - saleIndex : daySales.length + 1;
+}
+
+function getNextDailyCustomerNumber(date) {
+  const daySales = (state?.posSales || []).filter((sale) => sale.date === date);
+  const highestNumber = daySales.reduce((highest, sale) => {
+    const number = Number(sale.dailyCustomerNumber);
+    return Number.isInteger(number) && number > highest ? number : highest;
+  }, 0);
+  return Math.max(daySales.length, highestNumber) + 1;
+}
+
+function editPosSale(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS sales.', 'error');
+  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
+  if (!sale) return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+
+  editingPosSaleId = String(saleId);
+  $('pos-edit-id').value = sale.id;
+  $('pos-edit-date').value = sale.date || '';
+  $('pos-edit-time').value = sale.time || '';
+  $('pos-edit-payment').value = sale.payment || 'CASH';
+  $('pos-edit-customer').value = sale.customer || '';
+  $('pos-edit-phone').value = sale.customerPhone || '';
+  $('pos-edit-subtotal').value = Number(sale.subtotal ?? sale.totalRs ?? 0);
+  $('pos-edit-discount').value = Number(sale.discount || 0);
+  $('pos-edit-total').value = Number(sale.totalRs || 0);
+  $('pos-edit-cash-received').value = Number(sale.cashReceivedRs ?? sale.totalRs ?? 0);
+  $('pos-edit-change').value = Number(sale.changeRs || 0);
+  $('pos-edit-extra-cash-kept').value = Number(sale.extraCashKeptRs || 0);
+  $('pos-edit-extra-cash-reason').value = sale.extraCashReason || '';
+  $('pos-edit-extra-cash-fields').classList.toggle('hidden', sale.payment !== 'CASH');
+  $('pos-edit-extra-cash-reason-field').classList.toggle('hidden', sale.payment !== 'CASH');
+  $('pos-edit-delivery').checked = Boolean(sale.delivery);
+  $('pos-edit-delivery-fee').value = Number(sale.deliveryFeeRs || 0);
+  $('pos-edit-items').innerHTML = '';
+  (Array.isArray(sale.itemsDetails) ? sale.itemsDetails : []).forEach((item) => addPosSaleEditItem(item));
+  $('pos-sale-edit-modal').classList.remove('hidden');
+  $('pos-sale-edit-modal').classList.add('flex');
+}
+
+function addPosSaleEditItem(item = {}) {
+  const options = (state?.inventory || []).map((inventoryItem) =>
+    `<option value="${esc(inventoryItem.id)}"${String(inventoryItem.id) === String(item.id) ? ' selected' : ''}>${esc(inventoryItem.name)} · ${esc(inventoryUnitLabel(inventoryItem))}</option>`
+  );
+  const selectedExists = (state?.inventory || []).some((entry) => String(entry.id) === String(item.id));
+  if (item.id && !selectedExists) options.unshift(`<option value="${esc(item.id)}" selected>${esc(item.name || item.id)} · item no longer in inventory</option>`);
+  const row = document.createElement('tr');
+  row.className = 'pos-edit-item-row';
+  row.dataset.itemName = item.name || '';
+  row.dataset.unitLabel = item.unitLabel || '';
+  row.dataset.unitType = item.unitType || '';
+  row.dataset.packWeightGrams = item.packWeightGrams || '';
+  row.dataset.isPieces = item.isPieces ? 'true' : 'false';
+  row.innerHTML = `
+    <td class="p-2"><select aria-label="Product" required class="pos-edit-item-product w-full rounded-lg px-2 py-2 text-xs"><option value="">Select product</option>${options.join('')}</select></td>
+    <td class="p-2"><input aria-label="Quantity" type="number" min="0.01" step="0.01" required value="${esc(item.quantity ?? 1)}" class="pos-edit-item-quantity w-24 rounded-lg px-2 py-2 text-xs"></td>
+    <td class="p-2"><input aria-label="Unit price" type="number" min="0" step="0.01" required value="${esc(item.unitPrice ?? 0)}" class="pos-edit-item-price w-28 rounded-lg px-2 py-2 text-xs"></td>
+    <td class="p-2"><input aria-label="Line total" type="number" min="0" step="0.01" required value="${esc(item.lineTotal ?? 0)}" class="pos-edit-item-total w-28 rounded-lg px-2 py-2 text-xs"></td>
+    <td class="p-2 text-center"><input aria-label="Loyalty free giveaway" type="checkbox" ${item.isLoyaltyFreeGiveaway ? 'checked' : ''} class="pos-edit-item-free accent-yellow-400"></td>
+    <td class="p-2 text-right"><button type="button" onclick="this.closest('tr').remove()" class="rounded-lg px-2 py-1.5 text-red-300 hover:bg-red-500/20" aria-label="Remove item"><i class="fa-solid fa-trash-can"></i></button></td>`;
+  $('pos-edit-items').appendChild(row);
+}
+
+function closePosSaleEdit() {
+  editingPosSaleId = null;
+  $('pos-sale-edit-modal').classList.add('hidden');
+  $('pos-sale-edit-modal').classList.remove('flex');
+}
+
+function updatePosSaleEditPayment() {
+  const isCash = $('pos-edit-payment').value === 'CASH';
+  $('pos-edit-extra-cash-fields').classList.toggle('hidden', !isCash);
+  $('pos-edit-extra-cash-reason-field').classList.toggle('hidden', !isCash);
+  if (!isCash) {
+    $('pos-edit-cash-received').value = 0;
+    $('pos-edit-change').value = 0;
+    $('pos-edit-extra-cash-kept').value = 0;
+    $('pos-edit-extra-cash-reason').value = '';
+  } else {
+    updatePosSaleEditCashTotals('total');
+  }
+}
+
+function updatePosSaleEditCashTotals(changedField) {
+  if ($('pos-edit-payment').value !== 'CASH') return;
+  const total = Math.max(0, Number($('pos-edit-total').value) || 0);
+  const extraCash = Math.max(0, Number($('pos-edit-extra-cash-kept').value) || 0);
+  const required = total + extraCash;
+  if (changedField === 'change') {
+    const change = Math.max(0, Number($('pos-edit-change').value) || 0);
+    $('pos-edit-cash-received').value = required + change;
+  } else if (changedField === 'received') {
+    const received = Math.max(0, Number($('pos-edit-cash-received').value) || 0);
+    $('pos-edit-change').value = Math.max(0, received - required);
+  } else {
+    const change = Math.max(0, Number($('pos-edit-change').value) || 0);
+    $('pos-edit-cash-received').value = required + change;
+  }
+}
+
+async function savePosSaleEdit() {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can edit POS sales.', 'error');
+  if (!editingPosSaleId) return;
+  const saleId = editingPosSaleId;
+  const itemsDetails = [...$('pos-edit-items').querySelectorAll('.pos-edit-item-row')].map((row) => {
+    const itemId = row.querySelector('.pos-edit-item-product').value;
+    const inventoryItem = (state.inventory || []).find((entry) => String(entry.id) === itemId);
+    const existing = (state.posSales || []).find((sale) => String(sale.id) === saleId)
+      ?.itemsDetails?.find((detail) => String(detail.id) === itemId);
+    const unitType = inventoryItem ? inventoryUnit(inventoryItem) : row.dataset.unitType;
+    const quantity = Number(row.querySelector('.pos-edit-item-quantity').value);
+    const unitLabel = inventoryItem ? inventoryUnitLabel(inventoryItem) : row.dataset.unitLabel;
+    return {
+      id: itemId,
+      name: inventoryItem?.name || row.dataset.itemName || existing?.name || itemId,
+      unitType,
+      quantity,
+      unitLabel,
+      unitPrice: Number(row.querySelector('.pos-edit-item-price').value),
+      lineTotal: Number(row.querySelector('.pos-edit-item-total').value),
+      weightKg: unitType === 'kg' ? quantity : 0,
+      ...(inventoryItem?.packWeightGrams || row.dataset.packWeightGrams
+        ? { packWeightGrams: Number(inventoryItem?.packWeightGrams || row.dataset.packWeightGrams) } : {}),
+      ...(row.dataset.isPieces === 'true' ? { isPieces: true } : {}),
+      ...(row.querySelector('.pos-edit-item-free').checked ? { isLoyaltyFreeGiveaway: true } : {})
+    };
+  });
+  if (!itemsDetails.length) return showToast('Add at least one item to the sale.', 'error');
+  if (itemsDetails.some((item) => !item.id || !item.unitType || !Number.isFinite(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.unitPrice) || item.unitPrice < 0 || !Number.isFinite(item.lineTotal) || item.lineTotal < 0)) {
+    return showToast('Check product, quantity, unit price, and line total for every item.', 'error');
+  }
+  const itemsBreakdown = {};
+  itemsDetails.forEach((item) => {
+    if (item.unitType === 'kg') itemsBreakdown[item.id] = (itemsBreakdown[item.id] || 0) + item.quantity;
+  });
+  const itemsSummary = itemsDetails.map((item) =>
+    `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`
+  ).join(', ');
+  const extraCashKeptRs = $('pos-edit-payment').value === 'CASH'
+    ? Number($('pos-edit-extra-cash-kept').value || 0) : 0;
+  const extraCashReason = $('pos-edit-payment').value === 'CASH'
+    ? $('pos-edit-extra-cash-reason').value.trim() : '';
+  if (!Number.isFinite(extraCashKeptRs) || extraCashKeptRs < 0 ||
+      (extraCashKeptRs > 0 && !extraCashReason)) {
+    return showToast('Enter a valid extra cash amount and a reason when extra cash is kept.', 'error');
+  }
+  const payload = {
+    date: $('pos-edit-date').value,
+    time: $('pos-edit-time').value.trim(),
+    customer: $('pos-edit-customer').value.trim(),
+    customerPhone: $('pos-edit-phone').value.trim(),
+    payment: $('pos-edit-payment').value,
+    subtotal: Number($('pos-edit-subtotal').value),
+    discount: Number($('pos-edit-discount').value),
+    totalRs: Number($('pos-edit-total').value),
+    cashReceivedRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-cash-received').value || 0) : 0,
+    changeRs: $('pos-edit-payment').value === 'CASH' ? Number($('pos-edit-change').value || 0) : 0,
+    extraCashKeptRs,
+    extraCashReason,
+    delivery: $('pos-edit-delivery').checked,
+    deliveryFeeRs: Number($('pos-edit-delivery-fee').value || 0),
+    itemsDetails,
+    itemsBreakdown,
+    itemsSummary
+  };
+  const saveButton = $('pos-edit-save-button');
+  saveButton.disabled = true;
+  try {
+    await flushNow();
+    if (savePending || saveInFlight) {
+      throw new Error('Pending changes could not be saved. Wait for synchronization before editing this sale.');
+    }
+    await Api.updatePosSale(saleId, payload);
+    state = await Api.getState();
+    ensureStateCollections();
+    closePosSaleEdit();
+    renderAll();
+    setSyncStatus('Synced from MongoDB');
+    showToast(`Sale ${saleId} updated.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function deletePosSale(saleId) {
+  if (currentUser?.role !== 'admin') return showToast('Only an admin can delete POS sales.', 'error');
+  const sale = (state?.posSales || []).find((entry) => String(entry.id) === String(saleId));
+  if (!sale) return showToast('POS sale not found. Refresh the sales history and try again.', 'error');
+  if (!confirm(`Delete sale ${sale.id} from ${sale.date}?\n\nThis cannot be undone. Sold stock will be restored and linked credit/customer totals will be updated.`)) return;
+
+  try {
+    await flushNow();
+    if (savePending || saveInFlight) {
+      throw new Error('Pending changes could not be saved. Wait for synchronization before deleting this sale.');
+    }
+    await Api.deletePosSale(sale.id);
+    state = await Api.getState();
+    ensureStateCollections();
+    renderAll();
+    setSyncStatus('Synced from MongoDB');
+    showToast(`Sale ${sale.id} deleted and its stock restored.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function posSaleItemsHtml(sale) {
+  if (!Array.isArray(sale.itemsDetails) || sale.itemsDetails.length === 0) return esc(sale.itemsSummary || 'Item details unavailable');
+  return sale.itemsDetails.map((item) =>
+    `<div>${esc(item.name)}${item.isPieces ? ' — Pieces' : ''} — ${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel || item.unitType || 'unit')} · ${item.isLoyaltyFreeGiveaway ? 'FREE — LOYALTY GIVEAWAY' : `Rs. ${Number(item.lineTotal || 0).toLocaleString()}`}</div>`
+  ).join('');
+}
+
+function getPreviousDate(date) {
+  const previous = new Date(`${date}T00:00:00`);
+  previous.setDate(previous.getDate() - 1);
+  return fmtDate(previous);
+}
+
+function getNextDate(date) {
+  const next = new Date(`${date}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  return fmtDate(next);
+}
+
+function getCashierDayTotals(date) {
+  const entries = state.cashierEntries.filter((entry) => entry.date === date);
+  const opening = entries.find((entry) => entry.type === 'OPENING');
+  const dayCashSales = (state.posSales || []).filter((sale) => sale.date === date && sale.payment === 'CASH');
+  const extraCashKept = dayCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0)
+    + entries.filter((entry) => entry.type === 'EXTRA_CASH')
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const cashSales = dayCashSales
+    .reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0);
+  const withdrawn = entries.filter((entry) => entry.type === 'WITHDRAWAL')
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const balance = Number(opening?.amount || 0) + cashSales + extraCashKept - withdrawn;
+  const confirmedClose = state.cashierEntries.find((entry) =>
+    entry.date === getNextDate(date) && entry.type === 'OPENING' && entry.previousDate === date
+      && Number.isFinite(Number(entry.previousClosingAmount)));
+  return {
+    entries, opening, cashSales, extraCashKept, withdrawn, balance,
+    closingBalance: confirmedClose ? Number(confirmedClose.previousClosingAmount) : balance,
+    closingConfirmed: !!confirmedClose
+  };
+}
+
+function renderCashierDrawer() {
+  if (!state) return;
+  if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  const today = getTodayDate();
+  if (cashierAutoTodayDate !== today) {
+    cashierSelectedDate = today;
+    cashierAutoTodayDate = today;
+  }
+  if (cashierSelectedDate > today) cashierSelectedDate = today;
+  const selectedDate = cashierSelectedDate;
+  const viewingHistory = selectedDate !== today;
+  const { entries, opening, cashSales, extraCashKept, withdrawn, balance, closingBalance, closingConfirmed } = getCashierDayTotals(selectedDate);
+  const previousDate = getPreviousDate(today);
+  const previousDay = getCashierDayTotals(previousDate);
+  const awaitingCount = !viewingHistory && !opening && !!previousDay.opening;
+
+  $('cashier-view-date').max = today;
+  $('cashier-view-date').value = selectedDate;
+  $('cashier-date-label').innerText = selectedDate;
+  $('cashier-opening-balance').innerText = opening ? `Rs. ${Number(opening.amount).toLocaleString()}` : 'Not entered';
+  $('cashier-cash-sales').innerText = `Rs. ${cashSales.toLocaleString()}`;
+  $('cashier-extra-cash-kept').innerText = `Rs. ${extraCashKept.toLocaleString()}`;
+  $('cashier-withdrawals').innerText = `Rs. ${withdrawn.toLocaleString()}`;
+  $('cashier-balance-label').innerText = awaitingCount ? 'Previous Close Awaiting Confirmation'
+    : viewingHistory ? (closingConfirmed ? 'Closing Cash (Confirmed)' : 'Expected Closing Cash')
+    : 'Expected Cash in Cashier';
+  $('cashier-current-balance').innerText = awaitingCount
+    ? `Rs. ${previousDay.balance.toLocaleString()}`
+    : opening || viewingHistory ? `Rs. ${(viewingHistory ? closingBalance : balance).toLocaleString()}` : 'Opening count required';
+  $('cashier-previous-close-panel').classList.toggle('hidden', !awaitingCount);
+  $('cashier-previous-date').innerText = previousDate;
+  $('cashier-previous-close').innerText = `Rs. ${previousDay.balance.toLocaleString()}`;
+  $('cashier-opening-form').classList.toggle('hidden', viewingHistory || !!opening);
+  $('cashier-admin-required').classList.add('hidden');
+  $('cashier-opening-note').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-withdrawal-form').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-extra-cash-form').classList.toggle('hidden', viewingHistory || !opening);
+  $('cashier-history-note').classList.toggle('hidden', !viewingHistory);
+  $('cashier-opening-label-text').innerText = awaitingCount
+    ? `Counted opening cash (Rs.; previous close was ${previousDate})`
+    : 'Counted opening cash (Rs.)';
+  updateCashierOpeningReason();
+  $('cashier-entry-tbody').innerHTML = entries.length
+    ? entries.map((entry) => `
+      <tr>
+        <td class="py-2 px-3">${esc(entry.time || '')}</td>
+        <td class="py-2 px-3 font-bold">${entry.type === 'OPENING' ? 'Opening cash confirmed' : entry.type === 'EXTRA_CASH' ? 'Extra cash recorded' : 'Cash taken out'}</td>
+        <td class="py-2 px-3">${esc(entry.takenBy || '—')}</td>
+        <td class="py-2 px-3">${esc(entry.recordedBy || '—')}</td>
+        <td class="py-2 px-3 text-right font-bold">${entry.type === 'WITHDRAWAL' ? '−' : ''} Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
+        <td class="py-2 px-3">${esc(entry.note || (entry.type === 'OPENING' && entry.previousDate ? `Confirmed previous close for ${entry.previousDate}` : '—'))}</td>
+        <td class="py-2 px-3 text-right">${entry.type === 'EXTRA_CASH' && (selectedDate === today || currentUser?.role === 'admin')
+          ? `<button type="button" onclick="editCashierExtraCashEntry(${esc(JSON.stringify(String(entry.id)))})" class="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-[10px] font-bold text-yellow-300 hover:bg-yellow-400 hover:text-slate-950">Edit</button>`
+          : '—'}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="7" class="py-4 text-center text-slate-400">No cashier entries recorded for ${esc(selectedDate)}.</td></tr>`;
+}
+
+function updateCashierOpeningReason() {
+  if (!state || !$('cashier-opening-reason-container')) return;
+  const today = getTodayDate();
+  const previousDate = getPreviousDate(today);
+  const previousDay = getCashierDayTotals(previousDate);
+  const enteredAmount = $('cashier-opening-amount').value.trim();
+  const amount = Number(enteredAmount);
+  const differs = cashierSelectedDate === today && !state.cashierEntries.some((entry) =>
+    entry.date === today && entry.type === 'OPENING')
+    && !!previousDay.opening && enteredAmount !== '' && Number.isFinite(amount)
+    && Math.round(amount * 100) !== Math.round(previousDay.balance * 100);
+  $('cashier-opening-reason-container').classList.toggle('hidden', !differs);
+  $('cashier-opening-reason').required = differs;
+}
+
+function selectCashierDate() {
+  const selectedDate = $('cashier-view-date').value;
+  cashierSelectedDate = selectedDate && selectedDate <= getTodayDate()
+    ? selectedDate : getTodayDate();
+  renderCashierDrawer();
+}
+
+async function addCashierEntry(type) {
+  if (cashierSelectedDate !== getTodayDate()) {
+    return showToast('Historical cashier balances are read-only. Select today to record cash.', 'error');
+  }
+  const amountInput = type === 'OPENING' ? $('cashier-opening-amount') : $('cashier-withdrawal-amount');
+  const amount = Number(amountInput.value);
+  const takenBy = type === 'WITHDRAWAL' ? $('cashier-taken-by').value.trim() : '';
+  const note = type === 'OPENING' ? $('cashier-opening-reason').value.trim()
+    : $('cashier-withdrawal-note').value.trim();
+  if (!Number.isFinite(amount) || amount < 0 || (type === 'WITHDRAWAL' && amount === 0)) {
+    return showToast(type === 'OPENING' ? 'Enter a valid opening amount (zero or more).' : 'Enter an amount greater than zero.', 'error');
+  }
+  if (type === 'WITHDRAWAL' && !takenBy) return showToast('Enter the name of the person taking the cash.', 'error');
+  if (type === 'OPENING' && $('cashier-opening-reason').required && !note) {
+    return showToast('Enter a reason for the difference from yesterday’s closing cash.', 'error');
+  }
+
+  const button = type === 'OPENING' ? $('cashier-opening-button') : $('cashier-withdrawal-button');
+  button.disabled = true;
+  try {
+    const result = await Api.addCashierEntry({ type, amount, date: getTodayDate(), takenBy, note });
+    state.cashierEntries.unshift(result.entry);
+    amountInput.value = '';
+    if (type === 'OPENING') $('cashier-opening-reason').value = '';
+    if (type === 'WITHDRAWAL') {
+      $('cashier-taken-by').value = '';
+      $('cashier-withdrawal-note').value = '';
+    } else {
+      $('cashier-opening-reason').value = '';
+    }
+    renderAll();
+    showToast(type === 'OPENING' ? 'Today’s counted opening cash was confirmed.' : 'Cash withdrawal recorded and deducted from the cashier balance.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function setDailyCashOpening() { return addCashierEntry('OPENING'); }
+function recordCashWithdrawal() { return addCashierEntry('WITHDRAWAL'); }
+
+async function recordCashierExtraCash() {
+  if (cashierSelectedDate !== getTodayDate()) {
+    return showToast('Historical cashier balances are read-only. Select today to record extra cash.', 'error');
+  }
+  const amount = Number($('cashier-extra-cash-amount').value);
+  const note = $('cashier-extra-cash-note').value.trim();
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an extra cash amount greater than zero.', 'error');
+  if (!note) return showToast('Enter a reason or source for the extra cash.', 'error');
+  const button = $('cashier-extra-cash-form').querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await Api.addCashierEntry({ type: 'EXTRA_CASH', amount, date: getTodayDate(), note });
+    state.cashierEntries.unshift(result.entry);
+    $('cashier-extra-cash-amount').value = '';
+    $('cashier-extra-cash-note').value = '';
+    renderAll();
+    showToast('Extra cash recorded and added to the cashier balance.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function editCashierExtraCashEntry(entryId) {
+  const entry = (state?.cashierEntries || []).find((item) =>
+    String(item.id) === String(entryId) && item.type === 'EXTRA_CASH');
+  if (!entry) return showToast('Extra-cash entry not found. Refresh the cashier history and try again.', 'error');
+  if (entry.date !== getTodayDate() && currentUser?.role !== 'admin') {
+    return showToast('Only an admin can edit historical extra-cash entries.', 'error');
+  }
+  editingCashierExtraEntryId = String(entryId);
+  $('cashier-extra-cash-edit-amount').value = Number(entry.amount || 0);
+  $('cashier-extra-cash-edit-note').value = entry.note || '';
+  $('cashier-extra-cash-edit-modal').classList.remove('hidden');
+  $('cashier-extra-cash-edit-modal').classList.add('flex');
+}
+
+function closeCashierExtraCashEdit() {
+  editingCashierExtraEntryId = null;
+  $('cashier-extra-cash-edit-modal').classList.add('hidden');
+  $('cashier-extra-cash-edit-modal').classList.remove('flex');
+}
+
+async function saveCashierExtraCashEdit() {
+  if (!editingCashierExtraEntryId) return;
+  const amount = Number($('cashier-extra-cash-edit-amount').value);
+  const note = $('cashier-extra-cash-edit-note').value.trim();
+  if (!Number.isFinite(amount) || amount <= 0) return showToast('Enter an extra cash amount greater than zero.', 'error');
+  if (!note) return showToast('Enter a reason or source for the extra cash.', 'error');
+  const button = $('cashier-extra-cash-edit-save');
+  button.disabled = true;
+  try {
+    const result = await Api.updateCashierExtraCashEntry(editingCashierExtraEntryId, { amount, note });
+    const index = state.cashierEntries.findIndex((entry) => String(entry.id) === editingCashierExtraEntryId);
+    if (index >= 0) state.cashierEntries[index] = result.entry;
+    closeCashierExtraCashEdit();
+    renderAll();
+    showToast('Extra-cash entry updated.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function openPosPrintOptions() { $('pos-print-options-modal').classList.remove('hidden'); }
+function closePosPrintOptions() { $('pos-print-options-modal').classList.add('hidden'); }
+function printPosDetailed() {
+  closePosPrintOptions();
+  printSection('pos-income-summary');
+}
+function printPosSummary() {
+  const sales = getPosIncomeSales();
+  const productGroups = new Map();
+  const cashSales = sales.filter((sale) => sale.payment === 'CASH');
+  const extraCashSales = cashSales.filter((sale) => Number(sale.extraCashKeptRs) > 0);
+  const manualExtraCashEntries = getPosIncomeExtraCashEntries();
+  const extraCashTotal = extraCashSales.reduce((sum, sale) => sum + Number(sale.extraCashKeptRs || 0), 0)
+    + manualExtraCashEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const extraCashRows = [
+    ...extraCashSales.map((sale) => ({
+      source: 'Customer sale',
+      reference: sale.id,
+      customer: sale.customer || 'Walk-in Customer',
+      amount: Number(sale.extraCashKeptRs),
+      reason: sale.extraCashReason || 'No reason provided'
+    })),
+    ...manualExtraCashEntries.map((entry) => ({
+      source: 'Cashier entry',
+      reference: `${entry.date} ${entry.time || ''}`.trim(),
+      customer: '—',
+      amount: Number(entry.amount || 0),
+      reason: entry.note || 'No reason provided'
+    }))
+  ];
+  sales.forEach((sale) => {
+    const phone = phoneKey(sale.customerPhone);
+    const loyalty = phone.length >= 7 && (state.customers || [])
+      .some((customer) => phoneKey(customer.phone) === phone);
+
+    if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
+      sale.itemsDetails.forEach((item) => {
+        const productKey = `${item.id || item.name}:${item.isLoyaltyFreeGiveaway ? 'loyalty-giveaway' : item.isPieces ? 'pieces' : 'sale'}`;
+        if (!productGroups.has(productKey)) {
+          productGroups.set(productKey, {
+            name: `${item.name || 'Product'}${item.isPieces ? ' — Pieces' : ''}`, walkInQuantity: 0, loyaltyQuantity: 0,
+            unit: item.unitLabel || item.unitType || 'unit', total: 0
+          });
+        }
+        const product = productGroups.get(productKey);
+        product[loyalty ? 'loyaltyQuantity' : 'walkInQuantity'] += Number(item.quantity || 0);
+        product.total += Number(item.lineTotal || 0);
+      });
+    } else {
+      const keyWithoutDetails = `other:${sale.itemsSummary || 'Item details unavailable'}`;
+      if (!productGroups.has(keyWithoutDetails)) {
+        productGroups.set(keyWithoutDetails, {
+          name: sale.itemsSummary || 'Item details unavailable',
+          walkInQuantity: 0, loyaltyQuantity: 0, unit: '', total: 0
+        });
+      }
+      productGroups.get(keyWithoutDetails).total += Number(sale.totalRs || 0);
+    }
+  });
+  $('pos-summary-print-area').innerHTML = `
+    <h2>Income and Extra Cash Summary</h2>
+    <table><thead><tr><th>Source</th><th>Reference</th><th>Customer</th><th>Extra cash</th><th>Reason</th></tr></thead><tbody>${extraCashRows.map((entry) =>
+      `<tr><td>${esc(entry.source)}</td><td>${esc(entry.reference)}</td><td>${esc(entry.customer)}</td><td>Rs. ${entry.amount.toLocaleString()}</td><td>${esc(entry.reason)}</td></tr>`
+    ).join('') || '<tr><td colspan="5" class="text-center">No extra cash was recorded in this period.</td></tr>'}</tbody>
+    <tfoot><tr><th colspan="2">Total extra cash kept</th><th colspan="2">Rs. ${extraCashTotal.toLocaleString()}</th></tr></tfoot></table>
+    <table><thead><tr><th>Product</th><th>Walk-in Customer Quantity</th><th>Loyalty Customer Quantity</th><th>Line Total</th></tr></thead><tbody>${[...productGroups.values()].map((product) =>
+      `<tr><td>${esc(product.name)}</td><td>${product.walkInQuantity ? `${product.walkInQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>${product.loyaltyQuantity ? `${product.loyaltyQuantity.toLocaleString()} ${esc(product.unit)}` : '—'}</td><td>Rs. ${product.total.toLocaleString()}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="text-center">No product sales in this period.</td></tr>'}</tbody>
+    </table>`;
+  closePosPrintOptions();
+  printSection('pos-summary-print-area');
+}
+
+// ---------- server sync ----------
+let saveTimer = null, savePending = false, saveInFlight = false, salesRefreshInFlight = false, stateVersion = 0;
+
+function setSyncStatus(text, ok = true) {
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const side = $('sidebar-cloud-status');
+  if (side) {
+    side.className = `${ok ? 'text-emerald-400' : 'text-red-400'} font-bold flex items-center gap-1`;
+    side.innerHTML = `<i class="fa-solid fa-database"></i> ${esc(text)} • ${now}`;
+  }
+  const lbl = $('cloud-last-sync-label');
+  if (lbl) lbl.innerText = `${now} (${text})`;
+  const badge = $('modal-cloud-badge');
+  if (badge) {
+    badge.innerText = ok ? 'MONGODB CONNECTED' : 'SERVER OFFLINE';
+    badge.className = `px-2.5 py-0.5 rounded-full text-[10px] font-black ${ok ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`;
+  }
+}
+
+function queueSave() {
+  savePending = true;
+  stateVersion++;
+  setSyncStatus('Saving…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 400);
+}
+
+function ensureStateCollections() {
+  if (!state) return;
+  if (!Array.isArray(state.staff)) state.staff = Array.isArray(state.employees) ? state.employees : [];
+  delete state.employees;
+  if (!Array.isArray(state.customers)) state.customers = [];
+  if (!Array.isArray(state.posSales)) state.posSales = [];
+  if (!Array.isArray(state.receivablesList)) state.receivablesList = [];
+  if (!Array.isArray(state.cashierEntries)) state.cashierEntries = [];
+  if (!Array.isArray(state.farmIntakes)) state.farmIntakes = [];
+  if (Array.isArray(state.attendanceLogs)) {
+    state.attendanceLogs = state.attendanceLogs.map((log) => {
+      if (log.staffId !== undefined || log.empId === undefined) return log;
+      const { empId, ...rest } = log;
+      return { ...rest, staffId: empId };
+    });
+  }
+  if (!state.dailyVault || typeof state.dailyVault !== 'object') state.dailyVault = {};
+}
+
+async function flushSave() {
+  if (!state || !currentUser) return;
+  if (saveInFlight) { saveTimer = setTimeout(flushSave, 300); return; }
+  saveInFlight = true;
+  const versionAtStart = stateVersion;
+  try {
+    const result = await Api.putState(state);
+    (result.dailyCustomerNumbers || []).forEach(({ id, dailyCustomerNumber }) => {
+      const sale = state.posSales.find((entry) => String(entry.id) === String(id));
+      if (!sale || !Number.isInteger(Number(dailyCustomerNumber)) || Number(dailyCustomerNumber) < 1) return;
+      sale.dailyCustomerNumber = Number(dailyCustomerNumber);
+      const vaultSale = state.dailyVault?.[sale.date]?.posSales?.find(
+        (entry) => String(entry.id) === String(sale.id)
+      );
+      if (vaultSale) vaultSale.dailyCustomerNumber = sale.dailyCustomerNumber;
+      if ($('rc-id').innerText === `#${sale.id}`) {
+        $('rc-customer-count').innerText = String(sale.dailyCustomerNumber);
+      }
+    });
+    if (versionAtStart === stateVersion) savePending = false; else queueSave();
+    setSyncStatus('Saved to MongoDB');
+  } catch (err) {
+    setSyncStatus('Save failed - will retry', false);
+    if (!err.offline && err.status !== 401) showToast(err.message, 'error');
+    saveTimer = setTimeout(flushSave, 5000);
+  } finally {
+    saveInFlight = false;
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function flushNow() {
+  clearTimeout(saveTimer);
+  for (let i = 0; i < 20 && (savePending || saveInFlight); i++) {
+    if (!saveInFlight) await flushSave(); else await sleep(200);
+  }
+}
+
+async function pullFromServer(notify = false) {
+  if (!currentUser || savePending || saveInFlight) return;
+  try {
+    state = await Api.getState();
+    ensureStateCollections();
+    renderAll();
+    setSyncStatus('Synced from MongoDB');
+    if (notify) showToast('Latest data pulled from the database!', 'success');
+  } catch (err) {
+    setSyncStatus('Server offline', false);
+    if (notify) showToast(err.message, 'error');
+  }
+}
+
+async function refreshPosSales() {
+  if (!currentUser || savePending || saveInFlight || salesRefreshInFlight) return;
+  const versionAtStart = stateVersion;
+  salesRefreshInFlight = true;
+  try {
+    const { sales } = await Api.getPosSales();
+    if (!currentUser || !state || versionAtStart !== stateVersion || savePending || saveInFlight) return;
+    state.posSales = sales;
+    const todaySales = todaysPosSales();
+    $('kpi-pos-sales').innerText = todaySales.length
+      ? `Rs. ${todaySales.reduce((sum, sale) => sum + Number(sale.totalRs || 0), 0).toLocaleString()}`
+      : '—';
+    $('kpi-pos-count').innerText = todaySales.length ? `${todaySales.length} counter bills today` : 'No sales recorded today';
+    renderPosSalesHistory();
+    setSyncStatus('Sales refreshed from MongoDB');
+  } catch (err) {
+    setSyncStatus('Sales refresh failed', false);
+    console.error('Failed to refresh POS sales:', err);
+  } finally {
+    salesRefreshInFlight = false;
+  }
+}
+
+// Every action ends with saveState(): update vault mirror, re-render, push to server
+function saveState() {
+  if (isAccountant()) {
+    showToast('Accountant accounts have read-only access.', 'error');
+    return;
+  }
+  ensureStateCollections();
+  syncTodayIntoDailyVault();
+  renderAll();
+  queueSave();
+}
+
+// Pull remote changes (other devices / phones) every 20s while the user is idle
+setInterval(() => {
+  const el = document.activeElement;
+  const typing = el && ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName);
+  if (!currentUser) return;
+  if (typing || posCart.length > 0) refreshPosSales();
+  else pullFromServer(false);
+}, 20000);
+
+// ---------- Windows app / server settings ----------
+function openWindowsCloudModal() { $('cloud-endpoint-input').value = Api.base(); $('windows-cloud-modal').classList.remove('hidden'); }
+function closeWindowsCloudModal() { $('windows-cloud-modal').classList.add('hidden'); }
+
+function saveCloudEndpointAndSync() {
+  Api.setBase($('cloud-endpoint-input').value);
+  showToast('Server address saved. Reconnecting…', 'success');
+  setTimeout(() => location.reload(), 600);
+}
+
+function downloadBlob(content, mime, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function downloadWindowsBatLauncher() {
+  const currentUrl = window.location.href.split('?')[0];
+  const bat = ['@echo off', 'title Raihan Farm Shop - ERP & POS Windows Desktop Launcher',
+    'echo Starting Raihan Farm Shop ERP & POS in Native Windows Desktop Mode...',
+    'start "" msedge --app="' + currentUrl + '" --start-maximized', 'exit'].join('\r\n');
+  downloadBlob(bat, 'application/x-bat', 'Raihan_Farm_Shop_ERP_Windows.bat');
+  showToast('Downloaded Raihan_Farm_Shop_ERP_Windows.bat! Double-click it on Windows to launch as a desktop app.', 'success');
+}
+
+function triggerWindowsPwaInstall() {
+  if (deferredPwaPrompt) deferredPwaPrompt.prompt();
+  else showToast("Tip: In Chrome or Edge on Windows, click the 'Install App' icon in the address bar or use the .BAT launcher!", 'info');
+}
+
+function downloadElectronPackage() {
+  const cfg = {
+    name: 'raihan-farm-shop-erp', productName: 'Raihan Farm Shop ERP & POS', version: '3.0.0',
+    description: 'Windows Desktop POS, Slaughter Yield & Attendance ERP for Raihan Farm Shop',
+    main: 'main.js',
+    scripts: { start: 'electron .', buildWin: 'electron-packager . RaihanFarmShopERP --platform=win32 --arch=x64 --out=dist --overwrite' },
+    Instructions: "1. Put the frontend folder next to this file and create main.js that opens index.html (or your server URL). 2. Run 'npm install electron --save-dev' then 'npm start'."
+  };
+  downloadBlob(JSON.stringify(cfg, null, 2), 'text/json', 'package.json');
+  showToast('Downloaded Electron Windows .EXE package configuration!', 'success');
+}
+
+// ---------- permanent daily vault mirror ----------
+function syncTodayIntoDailyVault() {
+  if (!state) return;
+  const today = getTodayDate();
+  const todaysSales = todaysPosSales();
+  const todaysBatches = state.slaughterBatches.filter((b) => String(b.date).startsWith(today));
+  const previousSnapshotDate = Object.keys(state.dailyVault || {})
+    .filter((date) => date < today)
+    .sort()
+    .pop();
+  const previousSnapshot = previousSnapshotDate ? state.dailyVault[previousSnapshotDate] : null;
+  if (!state.dailyVault) state.dailyVault = {};
+  const existingSnapshot = state.dailyVault[today];
+  state.dailyVault[today] = {
+    date: today,
+    posSales: JSON.parse(JSON.stringify(todaysSales)),
+    slaughterBatches: JSON.parse(JSON.stringify(todaysBatches)),
+    inventoryAdjustments: existingSnapshot?.inventoryAdjustments || [],
+    inventorySnapshot: state.inventory.map((item) => {
+      const unitType = inventoryUnit(item);
+      const unitLabel = inventoryUnitLabel(item);
+      const kg = unitType === 'kg';
+      const previousItemSnapshot = (previousSnapshot?.inventorySnapshot || [])
+        .find((row) => String(row.id) === String(item.id));
+      const existingItemSnapshot = (existingSnapshot?.inventorySnapshot || [])
+        .find((row) => String(row.id) === String(item.id));
+      const addedStock = 0;
+      let soldStock = 0;
+      todaysSales.forEach((sale) => {
+        if (Array.isArray(sale.itemsDetails)) {
+          sale.itemsDetails.forEach((detail) => {
+            if (String(detail.id) === String(item.id)) soldStock += Number(detail.quantity || 0);
+          });
+        } else if (kg && sale.itemsBreakdown?.[item.id]) {
+          soldStock += Number(sale.itemsBreakdown[item.id]);
+        }
+      });
+      const closingStock = inventoryStock(item);
+      const precision = kg ? 2 : 0;
+      const previousClosingStock = previousItemSnapshot
+        ? Number(previousItemSnapshot.closingStock ?? previousItemSnapshot.closingKg)
+        : NaN;
+      const openingStock = Number.isFinite(previousClosingStock)
+        ? previousClosingStock
+        : Number.isFinite(Number(existingItemSnapshot?.openingStock ?? existingItemSnapshot?.openingKg))
+          ? Number(existingItemSnapshot.openingStock ?? existingItemSnapshot.openingKg)
+          : +(closingStock - addedStock + soldStock).toFixed(precision);
+      return {
+        id: item.id, name: item.name, source: item.source, unitType, unitLabel,
+        openingStock, addedStock: +addedStock.toFixed(precision), soldStock: +soldStock.toFixed(precision),
+        closingStock: +closingStock.toFixed(precision), price: inventoryPrice(item),
+        // Keep the original kg fields for older archive readers and backups.
+        ...(kg ? {
+          openingKg: openingStock, slaughterInKg: +addedStock.toFixed(2),
+          soldKg: +soldStock.toFixed(2), closingKg: +closingStock.toFixed(2),
+          pricePerKg: inventoryPrice(item)
+        } : {})
+      };
+    })
+  };
+}
+
+// ---------- backup / restore ----------
+function exportLifetimeBackup() {
+  if (!state) return;
+  syncTodayIntoDailyVault();
+  downloadBlob(JSON.stringify(state, null, 2), 'text/json', `raihan_farm_shop_lifetime_vault_${getTodayDate()}.json`);
+  showToast('Lifetime Vault Backup (.json) downloaded!', 'success');
+}
+
+function importLifetimeBackup(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const imported = JSON.parse(e.target.result);
+      if (!(imported && imported.inventory && imported.yearlyHistory)) return showToast('Invalid backup file format.', 'error');
+      if (!confirm('Restore this backup? Records not in the file will be removed from the database.')) return;
+      await Api.putState(imported, true);   // replace=true
+      savePending = false;
+      await pullFromServer();
+      showToast('Lifetime Vault Backup restored successfully!', 'success');
+    } catch (err) { showToast('Could not restore backup: ' + err.message, 'error'); }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ---------- authentication ----------
+function openLoginModal() {
+  $('login-error').classList.add('hidden');
+  $('login-close-btn').classList.toggle('hidden', !currentUser);
+  $('login-modal').classList.remove('hidden');
+}
+function closeLoginModal() { if (currentUser) $('login-modal').classList.add('hidden'); }
+
+async function closeShopAndLogout() {
+  if (!currentUser) return openLoginModal();
+  const negativeStockItems = state.inventory.filter((item) => inventoryStock(item) < 0);
+  if (negativeStockItems.length) {
+    const details = negativeStockItems
+      .map((item) => `• ${item.name}: ${inventoryStockText(item, inventoryUnit(item) === 'kg' ? 2 : 0)}`)
+      .join('\n');
+    return alert(`Cannot close the POS day while inventory is below zero. Add stock for these items first:\n\n${details}`);
+  }
+  if (pendingReceiptRedemptionSaleId) {
+    return showToast('Print the open receipt and complete its loyalty redemption before closing the shop.', 'error');
+  }
+  const confirmed = confirm(
+    'Close the shop on this terminal and log out?\n\n' +
+    'Any unsubmitted customer bill will be discarded. Completed sales and backups stay saved in the database and remain available through the POS history filters. The POS sales summary will open on tomorrow’s date the next time you sign in.'
+  );
+  if (!confirmed) return;
+
+  posCart = [];
+  selectedPosCategoryId = null;
+  showAllPosProducts = false;
+  ['pos-product-search', 'pos-weight-input', 'pos-quantity-input', 'pos-cust-phone',
+    'pos-cust-name', 'pos-cash-received', 'pos-extra-cash-kept', 'pos-extra-cash-reason']
+    .forEach((id) => { if ($(id)) $(id).value = ''; });
+  $('pos-discount').value = '0';
+  $('pos-discount-type').value = 'percentage';
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
+  $('pos-customer-status').innerText = '';
+  $('pos-pay-method').value = 'CASH';
+  pendingPosSale = null;
+  posIncomePeriod = 'DATE';
+  posIncomeDate = getTomorrowDate();
+  renderPosProducts();
+  renderPosCart();
+  updatePosCashPayment();
+  renderPosSalesHistory();
+  await logout();
+}
+
+async function logout() {
+  if (!currentUser) return openLoginModal();
+
+  await flushNow();
+  if (savePending || saveInFlight) {
+    return showToast('Could not save your latest changes. Please check the connection and try logging out again.', 'error');
+  }
+
+  clearTimeout(saveTimer);
+  Api.clearToken();
+  currentUser = null;
+  state = null;
+  posCart = [];
+  pendingPosSale = null;
+  pendingReceiptRedemptionSaleId = null;
+  activeReceiptPrintSaleId = null;
+  savePending = false;
+  saveInFlight = false;
+  stateVersion = 0;
+  $('receipt-modal').classList.add('hidden');
+  $('mobile-qr-modal').classList.add('hidden');
+  $('login-username').value = '';
+  $('login-password').value = '';
+  updateRoleSidebar();
+  enforceAccountantReadOnly();
+  switchTab('pos');
+  openLoginModal();
+  showToast('You have been logged out.', 'info');
+}
+
+async function handleLogin() {
+  const u = $('login-username').value.trim();
+  const p = $('login-password').value;
+  let authenticated = false;
+  try {
+    const res = await Api.login(u, p);
+    if (res.user?.role === 'farm') {
+      localStorage.setItem('raihan_farm_token', res.token);
+      $('login-password').value = '';
+      window.location.assign('/farm');
+      return;
+    }
+    Api.setToken(res.token);
+    currentUser = res.user;
+    authenticated = true;
+    updateRoleSidebar();
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
+    $('login-password').value = '';
+    savePending = false;
+    state = await Api.getState();
+    ensureStateCollections();
+    syncTodayIntoDailyVault();
+    applyRolePermissions();
+    switchTab(currentUser.role === 'staff' ? 'pos' : 'dashboard');
+    $('login-modal').classList.add('hidden');
+    setSyncStatus('Connected to MongoDB');
+    showToast(currentUser.role === 'admin'
+      ? 'Welcome Admin! Full dashboard, reports, and inventory controls unlocked.'
+      : currentUser.role === 'accountant'
+        ? 'Logged in as Accountant: full records are available in read-only mode.'
+        : 'Logged in as Staff: POS Terminal and inventory stock additions enabled.',
+    currentUser.role === 'staff' ? 'info' : 'success');
+  } catch (err) {
+    if (authenticated) {
+      Api.clearToken();
+      currentUser = null;
+      state = null;
+      updateRoleSidebar();
+      enforceAccountantReadOnly();
+      switchTab('pos');
+    }
+    const box = $('login-error');
+    box.innerText = err.status === 401
+      ? 'Invalid credentials.'
+      : err.message || 'Login failed. Please try again.';
+    box.classList.remove('hidden');
+  }
+}
+
+function applyRolePermissions() {
+  updateRoleSidebar();
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const isReadOnly = isAccountant();
+
+  const invNotice = $('inv-role-notice');
+  if (isAdmin) {
+    invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-yellow-400 text-slate-950 rounded-full';
+    invNotice.innerText = 'Admin Mode: Unlimited Direct Edits';
+  } else if (isReadOnly) {
+    invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-violet-400 text-slate-950 rounded-full';
+    invNotice.innerText = 'Accountant Mode: View Only';
+  } else {
+    invNotice.className = 'px-2.5 py-0.5 text-xs font-extrabold uppercase bg-sky-400 text-slate-950 rounded-full';
+    invNotice.innerText = 'Staff Mode: 1 Direct Edit Per Item (2nd+ Requires Admin Approval)';
+  }
+  renderAll();
+}
+
+function updateRoleSidebar() {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const canViewAdminPages = isAdmin || isAccountant();
+  $('active-user-label').innerText = currentUser ? currentUser.label : 'Not signed in';
+  $('active-user-label').className = isAdmin ? 'text-xs font-extrabold text-yellow-400 mt-0.5'
+    : isAccountant() ? 'text-xs font-extrabold text-violet-300 mt-0.5' : 'text-xs font-extrabold text-sky-400 mt-0.5';
+  $('role-badge-icon').className = `w-7 h-7 rounded-lg ${isAdmin ? 'bg-yellow-400' : isAccountant() ? 'bg-violet-400' : 'bg-sky-400'} text-slate-950 flex items-center justify-center font-black text-xs`;
+  $('role-badge-icon').innerHTML = isAdmin ? '<i class="fa-solid fa-user-shield"></i>'
+    : isAccountant() ? '<i class="fa-solid fa-eye"></i>' : '<i class="fa-solid fa-cash-register"></i>';
+  document.querySelectorAll('.admin-only-nav').forEach((el) => el.classList.toggle('hidden', !canViewAdminPages));
+  $('pos-billing-terminal')?.classList.toggle('hidden', isAccountant());
+  $('pos-close-shop')?.classList.toggle('hidden', isAccountant());
+  let number = 0;
+  document.querySelectorAll('#nav-dashboard, #nav-slaughter, #nav-inventory, #nav-pos, #nav-attendance, #nav-payroll, #nav-deliveries, #nav-coa')
+    .forEach((nav) => {
+      if (nav.classList.contains('hidden')) return;
+      const title = nav.querySelector('.nav-title');
+      if (title) title.innerText = `${++number}. ${title.innerText.replace(/^\d+\.\s*/, '')}`;
+    });
+}
+
+function switchTab(tabId) {
+  const adminOnlyTabs = ['dashboard', 'slaughter', 'attendance', 'payroll', 'coa'];
+  if (currentUser?.role === 'staff' && adminOnlyTabs.includes(tabId)) {
+    showToast('Access Restricted: Staff can access POS, Dressed Inventory, and Deliveries & Weekly Subs.', 'error');
+    tabId = 'pos';
+  }
+  ['dashboard', 'slaughter', 'inventory', 'pos', 'attendance', 'payroll', 'deliveries', 'coa'].forEach((t) => {
+    const tabEl = $('tab-' + t);
+    const navEl = $('nav-' + t);
+    if (tabEl) tabEl.classList.add('hidden');
+    if (navEl) {
+      navEl.classList.remove('active-nav');
+      navEl.classList.add('text-slate-300');
+    }
+  });
+  const targetTab = $('tab-' + tabId);
+  const targetNav = $('nav-' + tabId);
+  if (targetTab) targetTab.classList.remove('hidden');
+  if (targetNav) {
+    targetNav.classList.add('active-nav');
+    targetNav.classList.remove('text-slate-300');
+  }
+}
+
+function enforceAccountantReadOnly() {
+  const controls = document.querySelectorAll('button, input, select, textarea');
+  if (!isAccountant()) {
+    document.querySelectorAll('[data-accountant-disabled="true"]').forEach((control) => {
+      control.disabled = control.dataset.accountantOriginalDisabled === 'true';
+      delete control.dataset.accountantOriginalDisabled;
+      control.removeAttribute('aria-disabled');
+      if (control.dataset.accountantOriginalTitle) {
+        control.setAttribute('title', control.dataset.accountantOriginalTitle);
+      } else {
+        control.removeAttribute('title');
+      }
+      delete control.dataset.accountantOriginalTitle;
+      control.removeAttribute('data-accountant-disabled');
+    });
+    return;
+  }
+  controls.forEach((control) => {
+    const handler = ['onclick', 'onchange', 'oninput', 'onkeydown', 'onsubmit']
+      .map((attribute) => control.getAttribute(attribute) || '')
+      .join(' ');
+    const action = handler.match(/([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+    const isFilter = /search|filter|date|period|month|year|granularity|range/i.test(control.id || '');
+    const canUse = action
+      ? accountantReadOnlyActions.test(action)
+      : control.matches('input[type="date"]') && isFilter;
+    if (!canUse) {
+      control.dataset.accountantOriginalDisabled = String(control.disabled);
+      control.dataset.accountantOriginalTitle = control.getAttribute('title') || '';
+      control.disabled = true;
+      control.setAttribute('aria-disabled', 'true');
+      control.title = 'Accountant accounts have read-only access.';
+      control.setAttribute('data-accountant-disabled', 'true');
+    }
+  });
+}
+
+function blockAccountantWriteInteraction(event) {
+  if (!isAccountant()) return;
+  if (event.type === 'submit') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showToast('Accountant accounts have read-only access.', 'error');
+    return;
+  }
+  const control = event.target.closest?.('button, input, select, textarea');
+  if (!control) return;
+  const handler = ['onclick', 'onchange', 'oninput', 'onkeydown', 'onsubmit']
+    .map((attribute) => control.getAttribute(attribute) || '')
+    .join(' ');
+  const action = handler.match(/([A-Za-z_$][\w$]*)\s*\(/)?.[1];
+  const isFilter = /search|filter|date|period|month|year|granularity|range/i.test(control.id || '');
+  const canUse = action
+    ? accountantReadOnlyActions.test(action)
+    : control.matches('input[type="date"]') && isFilter;
+  if (canUse) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  showToast('Accountant accounts have read-only access.', 'error');
+}
+
+['click', 'input', 'change', 'submit'].forEach((eventName) => {
+  document.addEventListener(eventName, blockAccountantWriteInteraction, true);
+});
+
+// ---------- MODULE 2: farm slaughter (30% waste) ----------
+function estimateSlaughterLiveKg(intakeLiveKg, intakeCount, slaughterCount) {
+  if (!Number.isFinite(intakeLiveKg) || !Number.isFinite(intakeCount) ||
+      !Number.isFinite(slaughterCount) || intakeLiveKg <= 0 ||
+      intakeCount <= 0 || slaughterCount <= 0) return 0;
+  return +((intakeLiveKg / intakeCount) * slaughterCount).toFixed(2);
+}
+
+function getBatchSlaughterLiveKg(batch) {
+  return Number(batch.slaughterLiveKg) ||
+    estimateSlaughterLiveKg(Number(batch.liveKg), Number(batch.count), Number(batch.slaughterCount ?? batch.count));
+}
+
+function getBatchRemainingCount(batch) {
+  return batch.remainingCount === undefined || batch.remainingCount === null
+    ? Number(batch.count) - Number(batch.deadBeforeSlaughterCount || 0) - Number(batch.slaughterCount ?? batch.count)
+    : Number(batch.remainingCount);
+}
+
+function addSlaughterOutputRow(containerId, output = {}) {
+  const container = $(containerId);
+  if (!container) return;
+  const items = state ? state.inventory.filter((item) => inventoryUnit(item) === 'kg') : [];
+  const row = document.createElement('div');
+  row.className = 'grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3';
+  row.dataset.outputRow = 'true';
+  row.innerHTML = `
+    <div>
+      <label class="block text-[11px] text-slate-400 mb-1">Inventory Item to Verify</label>
+      <select data-output-category onchange="calculateSlaughterPreview()" class="w-full px-3 py-2 rounded-lg text-sm font-semibold">
+        ${items.length ? items.map((item) => `<option value="${esc(item.id)}" ${String(item.id) === String(output.categoryId || '') ? 'selected' : ''}>${esc(item.name)}</option>`).join('') : '<option value="">Add kg-based meat inventory first</option>'}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[11px] text-slate-400 mb-1">Dressed Weight to Verify (kg)</label>
+      <input data-output-weight type="number" min="0.01" step="0.01" value="${output.actualKg ? esc(output.actualKg) : ''}" placeholder="Enter weight to verify" oninput="calculateSlaughterPreview()" class="w-full px-3 py-2 rounded-lg text-sm font-bold">
+    </div>
+    <div class="flex items-end">
+      <button type="button" onclick="removeSlaughterOutputRow(this)" aria-label="Remove dressed inventory item" class="w-full sm:w-auto px-3 py-2 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10">
+        <i class="fa-solid fa-trash"></i><span class="sm:hidden ml-2">Remove item</span>
+      </button>
+    </div>`;
+  container.appendChild(row);
+  calculateSlaughterPreview();
+}
+
+function removeSlaughterOutputRow(button) {
+  const container = button.closest('[data-output-row]').parentElement;
+  const row = button.closest('[data-output-row]');
+  if (container.querySelectorAll('[data-output-row]').length === 1) {
+    row.querySelector('[data-output-category]').selectedIndex = 0;
+    row.querySelector('[data-output-weight]').value = '';
+  } else {
+    row.remove();
+  }
+  calculateSlaughterPreview();
+}
+
+function getPendingFarmIntakes() {
+  const slaughteredIntakeIds = new Set((state?.slaughterBatches || []).map((batch) => String(batch.intakeId || '')));
+  return (state?.farmIntakes || []).filter((intake) => !slaughteredIntakeIds.has(String(intake.id)));
+}
+
+function onFarmIntakeSelected() {
+  $('sl-dead-count').value = '0';
+  $('sl-slaughter-count').value = '';
+  $('slaughter-output-rows').innerHTML = '';
+  addSlaughterOutputRow('slaughter-output-rows');
+  calculateSlaughterPreview();
+}
+
+function recordFarmIntake() {
+  const animalType = $('sl-intake-animal-type').value;
+  const count = Number($('sl-intake-count').value);
+  const liveKg = Number($('sl-intake-live-kg').value);
+  if (!['Broiler', 'Layer', 'Parents'].includes(animalType) ||
+      !Number.isInteger(count) || count <= 0 ||
+      !Number.isFinite(liveKg) || liveKg <= 0) {
+    return showToast('Enter a valid animal type, whole number received, and total live weight for the morning intake.', 'error');
+  }
+
+  const now = new Date();
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  state.farmIntakes.unshift({
+    id: 'INTAKE-' + now.getTime(),
+    date: `${getTodayDate()} ${time}`,
+    animalType,
+    count,
+    liveKg: +liveKg.toFixed(2)
+  });
+  $('sl-intake-count').value = '';
+  $('sl-intake-live-kg').value = '';
+  saveState();
+  showToast('Morning farm intake saved. Select it in the evening to record deaths and slaughter.', 'success');
+}
+
+function readSlaughterOutputRows(containerId) {
+  return [...$(containerId).querySelectorAll('[data-output-row]')].map((row) => {
+    const categoryId = row.querySelector('[data-output-category]').value;
+    const item = state.inventory.find((entry) => String(entry.id) === categoryId);
+    return {
+      categoryId,
+      categoryName: item ? item.name : '',
+      actualKg: Number(Number(row.querySelector('[data-output-weight]').value).toFixed(2))
+    };
+  });
+}
+
+function calculateSlaughterPreview() {
+  const intake = (state?.farmIntakes || []).find((entry) => String(entry.id) === $('sl-intake-id').value);
+  const intakeCount = Math.max(0, Number(intake?.count) || 0);
+  const deadCount = Math.max(0, Number($('sl-dead-count').value) || 0);
+  const slaughterCount = Number($('sl-slaughter-count').value) || 0;
+  const intakeLiveKg = Math.max(0, Number(intake?.liveKg) || 0);
+  const slaughterLiveKg = estimateSlaughterLiveKg(intakeLiveKg, intakeCount, slaughterCount);
+  const remainingCount = intakeCount - deadCount - slaughterCount;
+  const actualKg = [...document.querySelectorAll('#slaughter-output-rows [data-output-weight]')]
+    .reduce((total, input) => total + Math.max(0, Number(input.value) || 0), 0);
+  const actualWasteKg = Math.max(0, slaughterLiveKg - actualKg);
+  const actualWastePct = slaughterLiveKg > 0 ? (actualWasteKg / slaughterLiveKg) * 100 : 0;
+  $('prev-avg-live').innerText = intakeCount > 0 && intakeLiveKg > 0 ? `${(intakeLiveKg / intakeCount).toFixed(2)} kg` : '—';
+  $('prev-estimated-live').innerText = slaughterLiveKg > 0
+    ? `Estimated slaughter live weight: ${slaughterLiveKg.toFixed(2)} kg`
+    : 'Enter slaughtered count to estimate total live weight.';
+  $('prev-expected-kg').innerText = `${(slaughterLiveKg * 0.70).toFixed(2)} kg`;
+  $('prev-std-waste').innerText = `(Std 30% Waste: ${(slaughterLiveKg * 0.30).toFixed(2)} kg)`;
+  $('prev-actual-waste').innerText = slaughterLiveKg > 0
+    ? `${actualWasteKg.toFixed(2)} kg (${actualWastePct.toFixed(1)}%)`
+    : '—';
+  $('prev-waste-per-animal').innerText = `Average per slaughtered animal: ${slaughterCount > 0 && slaughterLiveKg > 0 ? `${(actualWasteKg / slaughterCount).toFixed(2)} kg` : '—'}`;
+  $('prev-net-stock').innerText = `${actualKg.toFixed(2)} kg`;
+  $('sl-dead-count').max = String(intakeCount);
+  $('sl-slaughter-count').max = String(Math.max(0, intakeCount - deadCount));
+  $('sl-selected-intake-summary').innerText = intake
+    ? `${intake.animalType} • ${intake.count} received • ${Number(intake.liveKg).toFixed(2)} kg morning live weight • ${deadCount} dead • ${slaughterCount} slaughtered • ${remainingCount >= 0 ? `${remainingCount} remaining` : `${Math.abs(remainingCount)} over intake`} • Intake ${intake.id} (${intake.date})`
+    : 'Select a saved morning intake to see its animal count and live weight.';
+}
+
+function recordSlaughterBatch() {
+  const intake = (state.farmIntakes || []).find((entry) => String(entry.id) === $('sl-intake-id').value);
+  if (!intake || (state.slaughterBatches || []).some((batch) => String(batch.intakeId || '') === String(intake.id))) {
+    return showToast('Select an available morning intake before recording evening slaughter.', 'error');
+  }
+  const count = Number(intake.count);
+  const liveKg = Number(intake.liveKg);
+  const animalType = intake.animalType;
+  const deadBeforeSlaughterCount = Number($('sl-dead-count').value) || 0;
+  const slaughterAnimalType = animalType;
+  const slaughterCount = Number($('sl-slaughter-count').value) || 0;
+  const remainingCount = count - deadBeforeSlaughterCount - slaughterCount;
+  const slaughterLiveKg = estimateSlaughterLiveKg(liveKg, count, slaughterCount);
+  const outputs = readSlaughterOutputRows('slaughter-output-rows');
+  const actualKg = Number(outputs.reduce((total, output) => total + output.actualKg, 0).toFixed(2));
+  const animalTypes = ['Broiler', 'Layer', 'Parents'];
+  if (!animalTypes.includes(animalType) ||
+      !Number.isInteger(count) || count <= 0 || !Number.isInteger(deadBeforeSlaughterCount) ||
+      deadBeforeSlaughterCount < 0 || deadBeforeSlaughterCount > count ||
+      !Number.isInteger(slaughterCount) || slaughterCount <= 0 ||
+      slaughterCount > count - deadBeforeSlaughterCount ||
+      !Number.isFinite(liveKg) || liveKg <= 0 || !Number.isFinite(slaughterLiveKg) ||
+      slaughterLiveKg <= 0 ||
+      !outputs.length || outputs.some((output) => !output.categoryId ||
+        !Number.isFinite(output.actualKg) || output.actualKg <= 0 ||
+        !state.inventory.some((item) => String(item.id) === output.categoryId && inventoryUnit(item) === 'kg')) ||
+      actualKg > slaughterLiveKg) {
+    return showToast('Enter valid evening details. Slaughter count cannot exceed the selected intake after deaths, and dressed weight cannot exceed the estimated live weight of the slaughtered animals.', 'error');
+  }
+
+  const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
+  const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  state.slaughterBatches.unshift({
+    id: 'BATCH-' + Date.now().toString().slice(-7),
+    intakeId: intake.id,
+    intakeDate: intake.date,
+    date: `${getTodayDate()} ${nowTime}`,
+    source: [...new Set(outputs.map((output) =>
+      state.inventory.find((item) => String(item.id) === output.categoryId)?.source
+    ).filter(Boolean))].join(', ') || 'Farm',
+    categoryId: outputs[0].categoryId,
+    categoryName: outputs.map((output) => output.categoryName).join(', '),
+    animalType, deadBeforeSlaughterCount, slaughterAnimalType,
+    outputs,
+    count, liveKg, deadBeforeSlaughterCount, slaughterCount, remainingCount, slaughterLiveKg,
+    expectedKg: +(slaughterLiveKg * 0.70).toFixed(2), actualKg, wasteKg,
+    wastePct: +((wasteKg / slaughterLiveKg) * 100).toFixed(1)
+  });
+  $('sl-slaughter-count').value = '';
+  $('sl-dead-count').value = '0';
+  $('slaughter-output-rows').innerHTML = '';
+  addSlaughterOutputRow('slaughter-output-rows');
+  calculateSlaughterPreview();
+  saveState();
+  showToast('Evening double-check saved. Inventory was not changed.', 'success');
+}
+
+function dateTimeLocalValue(value) {
+  const date = new Date(String(value || '').replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return '';
+  return `${fmtDate(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function openSlaughterEdit(id) {
+  if (!currentUser || currentUser.role !== 'admin') return showToast('Only an admin can edit farm and slaughter records.', 'error');
+  const batch = state.slaughterBatches.find((entry) => entry.id === id);
+  if (!batch) return showToast('Slaughter batch not found.', 'error');
+  $('edit-batch-id').value = batch.id;
+  $('edit-batch-date').value = dateTimeLocalValue(batch.date);
+  $('edit-batch-source').value = batch.source || '';
+  $('edit-batch-animal-type').value = batch.animalType || 'Broiler';
+  $('edit-batch-count').value = batch.count;
+  $('edit-batch-live').value = batch.liveKg;
+  $('edit-batch-dead-count').value = batch.deadBeforeSlaughterCount ?? 0;
+  $('edit-batch-slaughter-animal-type').value = batch.slaughterAnimalType || batch.animalType || 'Broiler';
+  $('edit-batch-slaughter-count').value = batch.slaughterCount ?? batch.count;
+  $('edit-slaughter-output-rows').innerHTML = '';
+  batchOutputs(batch).forEach((output) => addSlaughterOutputRow('edit-slaughter-output-rows', output));
+  if (!batchOutputs(batch).length) addSlaughterOutputRow('edit-slaughter-output-rows');
+  $('slaughter-edit-modal').classList.remove('hidden');
+}
+
+function closeSlaughterEdit() { $('slaughter-edit-modal').classList.add('hidden'); }
+
+function updateBatchVault(oldBatch, newBatch) {
+  if (!state.dailyVault) state.dailyVault = {};
+  const oldDay = String(oldBatch.date).slice(0, 10), newDay = String(newBatch.date).slice(0, 10);
+  const oldVault = state.dailyVault && state.dailyVault[oldDay];
+  const newVault = state.dailyVault && state.dailyVault[newDay];
+  if (oldVault) {
+    oldVault.slaughterBatches = oldVault.slaughterBatches.filter((entry) => entry.id !== oldBatch.id);
+  }
+  if (newVault) {
+    newVault.slaughterBatches = newVault.slaughterBatches.filter((entry) => entry.id !== newBatch.id);
+    newVault.slaughterBatches.push({ ...newBatch });
+  }
+}
+
+function saveSlaughterEdit() {
+  if (!currentUser || currentUser.role !== 'admin') return showToast('Only an admin can edit farm and slaughter records.', 'error');
+  const batch = state.slaughterBatches.find((entry) => entry.id === $('edit-batch-id').value);
+  if (!batch) return showToast('Slaughter batch not found.', 'error');
+  const count = Number($('edit-batch-count').value), liveKg = Number($('edit-batch-live').value);
+  const animalType = $('edit-batch-animal-type').value;
+  const deadBeforeSlaughterCount = Number($('edit-batch-dead-count').value);
+  const slaughterAnimalType = $('edit-batch-slaughter-animal-type').value;
+  const slaughterCount = Number($('edit-batch-slaughter-count').value);
+  const remainingCount = count - deadBeforeSlaughterCount - slaughterCount;
+  const slaughterLiveKg = estimateSlaughterLiveKg(liveKg, count, slaughterCount);
+  const outputs = readSlaughterOutputRows('edit-slaughter-output-rows');
+  const actualKg = Number(outputs.reduce((total, output) => total + output.actualKg, 0).toFixed(2));
+  const dateValue = $('edit-batch-date').value;
+  const source = $('edit-batch-source').value.trim();
+  const sameAnimalType = animalType === slaughterAnimalType;
+  const animalTypes = ['Broiler', 'Layer', 'Parents'];
+  if (!source || !dateValue || !animalTypes.includes(animalType) || !animalTypes.includes(slaughterAnimalType) || !sameAnimalType ||
+      !Number.isInteger(count) || count <= 0 ||
+      !Number.isInteger(deadBeforeSlaughterCount) || deadBeforeSlaughterCount < 0 || deadBeforeSlaughterCount > count ||
+      !Number.isInteger(slaughterCount) || slaughterCount <= 0 ||
+      (sameAnimalType && slaughterCount > count - deadBeforeSlaughterCount) ||
+      !Number.isFinite(liveKg) || liveKg <= 0 || !Number.isFinite(slaughterLiveKg) ||
+      slaughterLiveKg <= 0 || !outputs.length ||
+      outputs.some((output) => !output.categoryId ||
+        !Number.isFinite(output.actualKg) || output.actualKg <= 0 ||
+        !state.inventory.some((item) => String(item.id) === output.categoryId && inventoryUnit(item) === 'kg')) ||
+      actualKg > slaughterLiveKg) {
+    return showToast('Enter valid intake and slaughter details using the same animal type. Slaughter count cannot exceed the intake remaining after deaths, and dressed weight cannot exceed the estimated slaughter live weight.', 'error');
+  }
+  const oldBatch = { ...batch };
+  const date = new Date(dateValue);
+  const wasteKg = +(slaughterLiveKg - actualKg).toFixed(2);
+  Object.assign(batch, {
+    date: `${fmtDate(date)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`,
+    source, categoryId: outputs[0].categoryId,
+    categoryName: outputs.map((output) => output.categoryName).join(', '), outputs,
+    animalType, count, liveKg, deadBeforeSlaughterCount,
+    slaughterAnimalType, slaughterCount, remainingCount, slaughterLiveKg,
+    expectedKg: +(slaughterLiveKg * 0.70).toFixed(2), actualKg, wasteKg,
+    wastePct: +((wasteKg / slaughterLiveKg) * 100).toFixed(1)
+  });
+  updateBatchVault(oldBatch, batch);
+  closeSlaughterEdit();
+  saveState();
+  showToast(`Slaughter batch ${batch.id} updated.`, 'success');
+}
+
+// ---------- MODULE 3: admin inventory edits and staff stock additions ----------
+async function submitInventoryEdit(id) {
+  const item = state.inventory.find((i) => i.id === id);
+  if (!item) return;
+  if (currentUser.role !== 'admin') {
+    const quantity = Number($(`inv-add-stock-${id}`).value);
+    const wholeQuantity = inventoryUnit(item) !== 'kg';
+    if (!Number.isFinite(quantity) || quantity <= 0 || (wholeQuantity && !Number.isInteger(quantity))) {
+      return showToast(wholeQuantity ? 'Enter a positive whole stock quantity.' : 'Enter a positive stock weight.', 'error');
+    }
+    try {
+      const updated = await Api.addInventoryStock(item.id, quantity);
+      if (inventoryUnit(item) === 'kg') item.stockKg = Number(updated.stockKg);
+      else item.stockQuantity = Number(updated.stockQuantity);
+      $(`inv-add-stock-${id}`).value = '';
+      saveState();
+      const reportDate = $('inv-stock-additions-date')?.value;
+      if (reportDate === getTodayDate() && inventoryStockAdditions !== null) {
+        await loadInventoryStockAdditions();
+      }
+      showToast(`Added ${quantity} ${inventoryUnitLabel(item)} to ${item.name}.`, 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+    return;
+  }
+
+  const newPrice = Number($(`inv-price-${id}`).value);
+  const newStock = Number($(`inv-stock-${id}`).value);
+  const wholesaleInput = $(`inv-wholesale-${id}`);
+  const newWholesale = wholesaleInput ? Number(wholesaleInput.value || 0) : Number(item.wholesalePrice || 0);
+  const nameInput = $(`inv-name-${id}`), sourceInput = $(`inv-source-${id}`);
+  const newName = nameInput ? nameInput.value.trim() : item.name;
+  const newSource = sourceInput ? sourceInput.value.trim() : item.source;
+  const wholeQuantity = inventoryUnit(item) !== 'kg';
+  if (!newName || !newSource || !Number.isFinite(newPrice) || newPrice <= 0 ||
+      !Number.isFinite(newWholesale) || newWholesale < 0 || !Number.isFinite(newStock) || newStock < 0 ||
+      (wholeQuantity && !Number.isInteger(newStock))) {
+    return showToast('Enter valid item details, prices, and a non-negative stock quantity (whole quantity for packets/units).', 'error');
+  }
+  const detailsChanged = nameInput && (newName !== item.name || newSource !== item.source || newWholesale !== Number(item.wholesalePrice || 0));
+  const valuesChanged = newPrice !== inventoryPrice(item) || newStock !== inventoryStock(item);
+  if (!detailsChanged && !valuesChanged) return showToast('No changes detected.', 'info');
+
+  try {
+    const update = {
+      expectedStock: inventoryStock(item),
+      name: newName,
+      source: newSource,
+      wholesalePrice: newWholesale,
+      ...(inventoryUnit(item) === 'kg'
+        ? { pricePerKg: newPrice, stockKg: newStock }
+        : { pricePerUnit: newPrice, stockQuantity: newStock })
+    };
+    const result = await Api.updateInventoryItem(item.id, update);
+    Object.assign(item, result.item);
+    saveState();
+    showToast(`Admin updated ${item.name} immediately.`, 'success');
+  } catch (err) {
+    showToast(`Could not update ${item.name}: ${err.message}`, 'error');
+  }
+}
+
+async function recordInventoryAdjustment() {
+  if (!currentUser) return showToast('Sign in before recording a stock adjustment.', 'error');
+  const itemId = $('inv-adjustment-item').value;
+  const item = state.inventory.find((entry) => String(entry.id) === itemId);
+  const direction = $('inv-adjustment-direction').value;
+  const quantityInput = $('inv-adjustment-quantity').value.trim();
+  const quantity = Number(quantityInput);
+  const reason = $('inv-adjustment-reason').value;
+  const note = $('inv-adjustment-note').value.trim();
+  if (!item || inventoryUnit(item) !== 'kg') {
+    return showToast('Select a valid meat item for the stock adjustment.', 'error');
+  }
+  if (!['INCREASE', 'DECREASE', 'COUNT'].includes(direction) || !quantityInput || !Number.isFinite(quantity) ||
+      quantity < 0 || (direction !== 'COUNT' && quantity === 0)) {
+    return showToast(direction === 'COUNT' ? 'Enter a valid counted balance of zero or more.' : 'Enter an adjustment amount greater than zero.', 'error');
+  }
+  if (!reason || (reason === 'Other' && !note)) {
+    return showToast(reason === 'Other' ? 'Add a note when selecting Other as the reason.' : 'Select a reason for this adjustment.', 'error');
+  }
+  const enteredQuantity = +quantity.toFixed(2);
+  if (direction !== 'COUNT' && enteredQuantity <= 0) {
+    return showToast('Adjustment must be at least 0.01 kg.', 'error');
+  }
+  if (direction === 'COUNT' && enteredQuantity < 0) {
+    return showToast('Counted balance cannot be negative.', 'error');
+  }
+
+  const submitButton = document.querySelector('[onclick="recordInventoryAdjustment()"]');
+  if (submitButton) submitButton.disabled = true;
+  try {
+    const result = await Api.recordInventoryAdjustment({
+      itemId: item.id,
+      direction,
+      quantity: enteredQuantity,
+      reason,
+      note
+    });
+    item.stockKg = Number(result.stockKg);
+    if (!state.dailyVault) state.dailyVault = {};
+    if (!state.dailyVault[result.date]) state.dailyVault[result.date] = { date: result.date, inventoryAdjustments: [] };
+    if (!Array.isArray(state.dailyVault[result.date].inventoryAdjustments)) {
+      state.dailyVault[result.date].inventoryAdjustments = [];
+    }
+    state.dailyVault[result.date].inventoryAdjustments.push(result.adjustment);
+    syncTodayIntoDailyVault();
+    $('inv-adjustment-quantity').value = '';
+    $('inv-adjustment-note').value = '';
+    $('inv-adjustment-reason').value = '';
+    renderAll();
+    showToast(direction === 'COUNT'
+      ? `${item.name} physical count recorded as ${enteredQuantity.toFixed(2)} kg.`
+      : `${item.name} stock ${direction === 'DECREASE' ? 'reduced' : 'increased'} by ${enteredQuantity.toFixed(2)} kg. Adjustment recorded.`, 'success');
+  } catch (err) {
+    showToast(`Could not record stock adjustment: ${err.message}`, 'error');
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
+}
+
+function renderInventoryAdjustmentHistory() {
+  const historyEl = $('inv-adjustment-history');
+  if (!historyEl || !state) return;
+  const dateInput = $('inv-adjustment-history-date');
+  if (dateInput && !dateInput.value) dateInput.value = getTodayDate();
+  const date = dateInput?.value || getTodayDate();
+  const adjustments = Array.isArray(state.dailyVault?.[date]?.inventoryAdjustments)
+    ? state.dailyVault[date].inventoryAdjustments : [];
+  historyEl.innerHTML = adjustments.length
+    ? adjustments.slice().reverse().map((entry) => {
+      const direction = entry.direction === 'DECREASE' ? 'DECREASE' : entry.direction === 'INCREASE' ? 'INCREASE' : 'COUNT';
+      const deltaText = entry.mode === 'COUNT'
+        ? `Counted ${formatMovementQuantity(Number(entry.countedStock ?? 0), entry.unitLabel || 'kg')}`
+        : `${direction === 'DECREASE' ? '−' : '+'}${formatMovementQuantity(Number(entry.quantity), entry.unitLabel || 'kg')}`;
+      const color = direction === 'DECREASE' ? 'text-red-300' : 'text-emerald-300';
+      return `<div class="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs">
+        <div>
+          <strong class="text-white">${esc(entry.itemName || 'Inventory item')}</strong>
+          <span class="ml-1 font-bold ${color}">${esc(deltaText)}</span>
+          <span class="ml-2 text-yellow-300">${esc(entry.reason || 'Adjustment')}</span>
+          ${entry.note ? `<p class="mt-1 text-slate-300">${esc(entry.note)}</p>` : ''}
+        </div>
+        <span class="text-right text-slate-400">${esc(entry.time || '')} · ${esc(entry.recordedBy || 'Staff')}</span>
+      </div>`;
+    }).join('')
+    : `<p class="text-xs text-slate-500">No stock adjustments recorded for ${esc(date)}.</p>`;
+}
+
+function inventoryAdjustmentDirectionChanged() {
+  const countMode = $('inv-adjustment-direction').value === 'COUNT';
+  $('inv-adjustment-quantity-label').innerText = countMode ? 'Counted balance (kg)' : 'Amount (kg)';
+  $('inv-adjustment-quantity').placeholder = countMode ? 'Enter physical balance' : 'e.g. 5';
+  $('inv-adjustment-quantity').min = countMode ? '0' : '0.01';
+}
+
+function inventoryUnitFormChanged() {
+  const unit = $('new-inv-unit').value;
+  const isKg = unit === 'kg';
+  $('new-inv-pack-wrap').classList.toggle('hidden', unit !== 'packet');
+  $('new-inv-price').placeholder = isKg ? 'Retail price per kg (Rs.)'
+    : unit === 'packet' ? 'Retail price per packet (Rs.)' : 'Retail price per unit (Rs.)';
+  $('new-inv-price').step = '0.01';
+  $('new-inv-min-stock').placeholder = isKg ? 'Low-stock alert threshold (kg)' : 'Low-stock alert threshold (whole quantity)';
+  $('new-inv-min-stock').step = isKg ? '0.1' : '1';
+  $('new-inv-wholesale').placeholder = isKg ? 'Wholesale price per kg (Rs.)'
+    : unit === 'packet' ? 'Wholesale price per packet (Rs.)' : 'Wholesale price per unit (Rs.)';
+}
+
+function addInventoryItem() {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const name = $('new-inv-name').value.trim();
+  const source = $('new-inv-source').value.trim();
+  const unitType = $('new-inv-unit').value;
+  const price = Number($('new-inv-price').value);
+  const wholesalePrice = Number($('new-inv-wholesale').value || 0);
+  const minStock = Number($('new-inv-min-stock').value || 0);
+  const packWeightGrams = Number($('new-inv-pack-grams').value || 0);
+  const wholeQuantity = unitType !== 'kg';
+  if (!name || !source || !Number.isFinite(price) || price <= 0 || !Number.isFinite(wholesalePrice) || wholesalePrice < 0 ||
+      !Number.isFinite(minStock) || minStock < 0 || (wholeQuantity && !Number.isInteger(minStock)) ||
+      (unitType === 'packet' && (!Number.isInteger(packWeightGrams) || packWeightGrams <= 0))) {
+    return showToast('Enter a name, supplier/source, valid retail and wholesale prices, and valid unit-specific stock settings.', 'error');
+  }
+
+  const id = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'item'}-${Date.now()}`;
+  const item = {
+    id, name, source, unitType, wholesalePrice,
+    ...(unitType === 'kg'
+      ? { stockKg: 0, pricePerKg: price, minStockKg: minStock }
+      : { stockQuantity: 0, pricePerUnit: price, minStockQuantity: minStock }),
+    ...(unitType === 'packet' ? { packWeightGrams } : {})
+  };
+  state.inventory.push(item);
+  $('new-inv-name').value = '';
+  $('new-inv-source').value = '';
+  $('new-inv-wholesale').value = '';
+  $('new-inv-price').value = '';
+  $('new-inv-min-stock').value = '';
+  $('new-inv-pack-grams').value = '';
+  saveState();
+  showToast(`${name} added with zero ${inventoryUnitLabel(item)} stock.`, 'success');
+}
+
+// ---------- financials, receivables & archive ----------
+function markReceivableCollected(invId) {
+  if (currentUser.role !== 'admin') return;
+  const rec = state.receivablesList.find((r) => r.id === invId);
+  if (!rec || rec.status === 'Collected') return;
+  rec.status = 'Collected';
+  const m = state.yearlyHistory[state.yearlyHistory.length - 1];
+  if (m) { m.receivables = Math.max(0, m.receivables - rec.amount); m.posCashSales += rec.amount; }
+  saveState();
+  showToast(`Receivable ${invId} (Rs. ${rec.amount.toLocaleString()}) marked as Collected!`, 'success');
+}
+
+function openAnnualReportModal() { renderAnnualAnalytics(); $('annual-report-modal').classList.remove('hidden'); }
+function closeAnnualReportModal() { $('annual-report-modal').classList.add('hidden'); }
+
+function setArchiveGranularity(mode) {
+  archiveGranularity = mode;
+  ['DATE', 'WEEKLY', 'MONTHLY', 'YEARLY', 'LIFETIME'].forEach((m) => {
+    const btn = $('gran-' + m);
+    if (!btn) return;
+    btn.className = m === mode
+      ? 'px-3 py-2 rounded-xl text-xs font-extrabold transition bg-yellow-400 text-slate-950 shadow-md shadow-yellow-400/20'
+      : 'px-3 py-2 rounded-xl text-xs font-bold transition bg-slate-950 text-slate-300 hover:bg-slate-800 border border-slate-800';
+  });
+  if (state) renderAnnualAnalytics();
+}
+
+function onCalendarDateChange(dateStr) {
+  if (!dateStr) return;
+  selectedArchiveDate = dateStr;
+  archiveDateRange = null;
+  setArchiveGranularity('DATE');
+  showToast(`Selected ${dateStr}. Only saved records are displayed.`, 'info');
+}
+
+function toggleArchiveDateRange(enabled = true) {
+  const controls = $('archive-date-range-controls');
+  if (enabled) {
+    if (!archiveDateRange) archiveDateRange = { from: selectedArchiveDate, to: selectedArchiveDate };
+    $('archive-range-from').value = archiveDateRange.from;
+    $('archive-range-to').value = archiveDateRange.to;
+    setArchiveGranularity('DATE');
+  } else {
+    archiveDateRange = null;
+  }
+  controls.classList.toggle('hidden', !enabled);
+  $('archive-calendar-picker').classList.toggle('hidden', enabled);
+  $('archive-date-label').innerHTML = enabled
+    ? '<i class="fa-regular fa-calendar-check mr-1"></i>Custom Range:'
+    : '<i class="fa-regular fa-calendar-check mr-1"></i>Select Date:';
+  ['archive-today-button', 'archive-previous-day', 'archive-next-day'].forEach((id) => {
+    $(id).classList.toggle('hidden', enabled);
+  });
+  $('archive-range-toggle').classList.toggle('hidden', enabled);
+  if (state) renderAnnualAnalytics();
+}
+
+function applyArchiveDateRange() {
+  const from = $('archive-range-from').value;
+  const to = $('archive-range-to').value;
+  if (!from || !to) return showToast('Select both the start and end dates.', 'error');
+  if (from > to) return showToast('The start date must be on or before the end date.', 'error');
+  archiveDateRange = { from, to };
+  selectedArchiveDate = from;
+  renderAnnualAnalytics();
+  showToast(`Showing records from ${from} to ${to}.`, 'info');
+}
+
+function jumpToCalendarDate(dateStr) {
+  selectedArchiveDate = dateStr;
+  archiveDateRange = null;
+  if (!$('archive-date-range-controls').classList.contains('hidden')) toggleArchiveDateRange(false);
+  const picker = $('archive-calendar-picker');
+  if (picker) picker.value = dateStr;
+  setArchiveGranularity('DATE');
+}
+function stepCalendarDate(delta) {
+  const d = new Date(selectedArchiveDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return;
+  d.setDate(d.getDate() + delta);
+  jumpToCalendarDate(fmtDate(d));
+}
+
+// Real data only: dates with no stored record show an empty day (no invented numbers)
+function getDaySnapshot(dateStr) {
+  if (state.dailyVault[dateStr]) return state.dailyVault[dateStr];
+  const posSales = (state.posSales || []).filter((sale) => sale.date === dateStr);
+  const slaughterBatches = (state.slaughterBatches || []).filter((batch) => String(batch.date).startsWith(dateStr));
+  return {
+    date: dateStr, posSales, slaughterBatches, inventorySnapshot: []
+  };
+}
+
+function getDayInventoryRows(snapshot, sales) {
+  const rows = new Map((snapshot.inventorySnapshot || []).map((row) => {
+    const unitType = row.unitType || 'kg';
+    const kg = unitType === 'kg';
+    const openingStock = row.openingStock ?? row.openingKg;
+    const addedStock = row.addedStock ?? row.slaughterInKg;
+    const soldStock = row.soldStock ?? row.soldKg;
+    const closingStock = row.closingStock ?? row.closingKg;
+    return [String(row.id), {
+      ...row,
+      unitType,
+      unitLabel: row.unitLabel || (kg ? 'kg' : unitType),
+      openingStock: openingStock === undefined || openingStock === null ? null : Number(openingStock),
+      addedStock: addedStock === undefined || addedStock === null ? null : Number(addedStock),
+      soldStock: soldStock === undefined || soldStock === null ? null : Number(soldStock),
+      closingStock: closingStock === undefined || closingStock === null ? null : Number(closingStock),
+      price: Number(row.price ?? row.pricePerKg ?? 0),
+      historicalStockAvailable: true,
+      stockMovementAvailable: [openingStock, addedStock, soldStock, closingStock]
+        .every((value) => value !== undefined && value !== null && Number.isFinite(Number(value)))
+    }];
+  }));
+  const addCurrentInventoryItem = (item) => {
+    const key = String(item.id);
+    if (rows.has(key)) return;
+    const unitType = inventoryUnit(item);
+    rows.set(key, {
+      id: item.id,
+      name: item.name,
+      source: item.source || '',
+      unitType,
+      unitLabel: inventoryUnitLabel(item),
+      openingStock: null,
+      addedStock: null,
+      soldStock: 0,
+      closingStock: null,
+      price: null,
+      historicalStockAvailable: false,
+      stockMovementAvailable: false
+    });
+  };
+  const addSoldProduct = (itemId, detail = {}) => {
+    const key = String(itemId || '');
+    if (!key || rows.has(key)) return;
+    const inventoryItem = state.inventory.find((item) => String(item.id) === key);
+    if (!inventoryItem) {
+      const unitType = detail.unitType || 'kg';
+      rows.set(key, {
+        id: key,
+        name: detail.name || 'Inventory item',
+        source: '',
+        unitType,
+        unitLabel: detail.unitLabel || unitType,
+        openingStock: null,
+        addedStock: null,
+        soldStock: 0,
+        closingStock: null,
+        price: null,
+        historicalStockAvailable: false,
+        stockMovementAvailable: false
+      });
+      return;
+    }
+    const unitType = detail.unitType || inventoryItem?.unitType || 'kg';
+    rows.set(key, {
+      id: key,
+      name: detail.name || inventoryItem?.name || 'Inventory item',
+      source: inventoryItem?.source || '',
+      unitType,
+      unitLabel: detail.unitLabel || (inventoryItem ? inventoryUnitLabel(inventoryItem) : unitType),
+      openingStock: null,
+      addedStock: null,
+      soldStock: 0,
+      closingStock: null,
+      price: null,
+      historicalStockAvailable: false,
+      stockMovementAvailable: false
+    });
+  };
+  sales.forEach((sale) => {
+    if (Array.isArray(sale.itemsDetails)) {
+      sale.itemsDetails.forEach((detail) => {
+        addSoldProduct(detail.id, detail);
+        const row = rows.get(String(detail.id || ''));
+        if (row && !row.historicalStockAvailable) row.soldStock += Number(detail.quantity || 0);
+      });
+    } else {
+      Object.entries(sale.itemsBreakdown || {}).forEach(([itemId, quantity]) => {
+        addSoldProduct(itemId);
+        const row = rows.get(String(itemId));
+        if (row && !row.historicalStockAvailable) row.soldStock += Number(quantity || 0);
+      });
+    }
+  });
+  state.inventory.forEach(addCurrentInventoryItem);
+  return [...rows.values()].map((row) => {
+    if (row.unitType !== 'kg' || !row.historicalStockAvailable || !row.stockMovementAvailable) {
+      return { ...row, inventoryAdjustments: [], adjustmentQuantity: null, expectedClosingStock: null, stockVariance: null };
+    }
+    const inventoryAdjustments = (snapshot.inventoryAdjustments || [])
+      .filter((entry) => String(entry.itemId) === String(row.id));
+    const adjustmentQuantity = inventoryAdjustments.reduce((total, entry) =>
+      total + Number(entry.delta ?? ((entry.direction === 'DECREASE' ? -1 : 1) * Number(entry.quantity || 0))), 0);
+    const expectedClosingStock = Number(row.openingStock) + Number(row.addedStock)
+      - Number(row.soldStock) + adjustmentQuantity;
+    return {
+      ...row,
+      inventoryAdjustments,
+      adjustmentQuantity,
+      expectedClosingStock,
+      stockVariance: expectedClosingStock - Number(row.closingStock)
+    };
+  });
+}
+
+function formatMovementQuantity(value, unitLabel, digits = unitLabel === 'kg' ? 2 : 0) {
+  return value === null || value === undefined ? '—' : `${Number(value).toFixed(digits)} ${unitLabel}`;
+}
+
+function renderCalendarDayInspector() {
+  const picker = $('archive-calendar-picker');
+  if (picker && picker.value !== selectedArchiveDate) picker.value = selectedArchiveDate;
+  const isRange = Boolean(archiveDateRange);
+  const range = archiveDateRange;
+  if (!isRange && selectedArchiveDate === getTodayDate()) syncTodayIntoDailyVault();
+  const snap = isRange ? null : getDaySnapshot(selectedArchiveDate);
+  const sales = isRange
+    ? (state.posSales || []).filter((sale) => sale.date >= range.from && sale.date <= range.to)
+    : snap.posSales;
+  const batches = isRange
+    ? (state.slaughterBatches || []).filter((batch) => {
+      const date = String(batch.date || '').slice(0, 10);
+      return date >= range.from && date <= range.to;
+    })
+    : snap.slaughterBatches;
+  const inventoryRows = isRange ? [] : getDayInventoryRows(snap, sales);
+  const dateLabel = isRange ? `${range.from} to ${range.to}` : selectedArchiveDate;
+  const hasDailyRecord = Boolean(snap && (snap.inventorySnapshot.length || sales.length || batches.length));
+  const dayPosTotal = sales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
+  const daySoldKg = sales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0);
+  const daySlaughterKg = batches.reduce((total, batch) => total + batchOutputs(batch)
+    .reduce((sum, output) => sum + Number(output.actualKg || 0), 0), 0);
+  $('cal-selected-date-heading').innerText = isRange
+    ? `${dateLabel} (Custom Date Range)`
+    : `${selectedArchiveDate} ${hasDailyRecord ? (selectedArchiveDate === getTodayDate() ? '(Today — Live Shop Record)' : '(Permanent Archive Record)') : '(No saved records)'}`;
+  $('cal-date-snapshot-title').innerText = isRange ? 'Selected Date Range Summary' : 'Selected Calendar Date Snapshot';
+  $('cal-day-sales-title').innerHTML = isRange
+    ? '<i class="fa-solid fa-receipt"></i> POS Sales Bills & Slaughter Logs in Date Range'
+    : "<i class=\"fa-solid fa-receipt\"></i> That Day's POS Sales Bills & Slaughter Logs";
+  $('cal-day-pos-badge').innerText = sales.length ? `${isRange ? 'Range' : 'Day'} POS Sales: Rs. ${dayPosTotal.toLocaleString()}` : 'No sales recorded';
+  $('cal-day-kg-badge').innerText = sales.length ? `Dressed Sold: ${daySoldKg.toFixed(2)} kg` : 'No sales recorded';
+  $('cal-day-slaughter-badge').innerText = batches.length ? `Farm Slaughter In: +${daySlaughterKg.toFixed(2)} kg` : 'No slaughter recorded';
+  $('cal-day-tx-count').innerText = isRange
+    ? `${sales.length} POS Bills • ${batches.length} Slaughter Batches`
+    : hasDailyRecord ? `${sales.length} POS Bills • ${batches.length} Slaughter Batches` : 'No records for this date';
+  $('calendar-day-inventory-panel').classList.toggle('hidden', isRange);
+  $('calendar-day-sales-panel').classList.toggle('lg:col-span-12', isRange);
+  $('calendar-day-sales-panel').classList.toggle('lg:col-span-5', !isRange);
+
+  $('cal-day-inventory-tbody').innerHTML = isRange ? '' : inventoryRows.length === 0
+    ? '<tr><td colspan="9" class="py-5 text-center text-slate-400">No inventory snapshot recorded for this date.</td></tr>'
+    : inventoryRows.map((row) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-2 px-2 font-bold text-white">${esc(row.name)}${row.source ? `<span class="block text-[10px] font-normal text-slate-400">${esc(row.source)}</span>` : ''}</td>
+      <td class="py-2 px-2 text-right text-slate-400">${formatMovementQuantity(row.openingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-semibold text-sky-400">${row.addedStock === null ? '—' : `+${formatMovementQuantity(row.addedStock, row.unitLabel)}`}</td>
+      <td class="py-2 px-2 text-right font-semibold text-amber-400">-${formatMovementQuantity(row.soldStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-semibold ${row.adjustmentQuantity < -0.009 ? 'text-red-300' : row.adjustmentQuantity > 0.009 ? 'text-emerald-300' : 'text-slate-400'}">${row.adjustmentQuantity === null ? '—' : row.adjustmentQuantity < -0.009 ? formatMovementQuantity(row.adjustmentQuantity, row.unitLabel) : row.adjustmentQuantity > 0.009 ? `+${formatMovementQuantity(row.adjustmentQuantity, row.unitLabel)}` : '—'}</td>
+      <td class="py-2 px-2 text-right font-semibold text-slate-300">${formatMovementQuantity(row.expectedClosingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-black text-emerald-400">${formatMovementQuantity(row.closingStock, row.unitLabel)}</td>
+      <td class="py-2 px-2 text-right font-bold ${row.stockVariance > 0.009 ? 'text-red-400' : row.stockVariance < -0.009 ? 'text-amber-300' : 'text-emerald-400'}">${row.stockVariance === null ? '—' : row.stockVariance > 0.009 ? `Short ${formatMovementQuantity(row.stockVariance, row.unitLabel)}` : row.stockVariance < -0.009 ? `Extra ${formatMovementQuantity(-row.stockVariance, row.unitLabel)}` : 'Matches'}</td>
+      <td class="py-2 px-2 text-right text-yellow-400 font-bold">${row.price === null ? '—' : `Rs. ${Number(row.price).toLocaleString()} / ${esc(row.unitLabel)}`}</td>
+    </tr>`).join('');
+  const dayAdjustments = isRange ? [] : (snap.inventoryAdjustments || []);
+  $('cal-day-adjustments').innerHTML = dayAdjustments.length
+    ? dayAdjustments.slice().reverse().map((entry) => `
+      <div class="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs">
+        <div>
+          <strong class="text-white">${esc(entry.itemName)}</strong>
+          <span class="ml-1 font-bold ${entry.direction === 'DECREASE' ? 'text-red-300' : 'text-emerald-300'}">${entry.mode === 'COUNT' ? `Counted ${formatMovementQuantity(Number(entry.countedStock), entry.unitLabel || 'kg')}` : `${entry.direction === 'DECREASE' ? '−' : '+'}${formatMovementQuantity(Number(entry.quantity), entry.unitLabel || 'kg')}`}</span>
+          <span class="ml-2 text-yellow-300">${esc(entry.reason)}</span>
+          ${entry.note ? `<p class="mt-1 text-slate-300">${esc(entry.note)}</p>` : ''}
+        </div>
+        <span class="text-right text-slate-400">${esc(entry.time || '')} · ${esc(entry.recordedBy || 'Admin')}</span>
+      </div>`).join('')
+    : '<p class="text-xs text-slate-500">No manual stock adjustments recorded for this date.</p>';
+
+  const salesHtml = sales.map((p) => `
+    <div class="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between text-xs">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-black text-yellow-400">${esc(p.id)}</span><span class="font-bold text-white">${esc(p.customer)}</span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-slate-300">${esc(p.payment)}</span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-0.5">${isRange ? `${esc(p.date)} • ` : ''}${esc(p.itemsSummary)}</p>
+      </div>
+      <div class="text-right shrink-0"><span class="font-black text-emerald-400 block">Rs. ${Number(p.totalRs).toLocaleString()}</span><span class="text-[10px] text-slate-500">${esc(p.time)}</span></div>
+    </div>`).join('');
+
+  const batchHtml = batches.map((b) => `
+    <div class="p-2.5 rounded-xl bg-slate-950/60 border border-sky-500/30 flex items-center justify-between text-xs">
+      <div><span class="text-[10px] uppercase font-extrabold text-sky-400 block">Farm Slaughter Batch (${esc(b.id)})${isRange ? ` • ${esc(String(b.date).slice(0, 10))}` : ''}</span><span class="font-bold text-white">${Number(b.slaughterCount ?? b.count)} slaughtered • ${batchOutputs(b).map((output) => esc(output.categoryName)).join(', ')} (Estimated slaughter live: ${getBatchSlaughterLiveKg(b).toFixed(2)}kg)</span></div>
+      <div class="text-right"><span class="font-black text-sky-400">+${Number(b.actualKg || 0).toFixed(2)} kg Dressed</span><span class="text-[10px] text-slate-400 block">${b.wastePct}% Waste</span></div>
+    </div>`).join('');
+
+  $('cal-day-sales-list').innerHTML = (salesHtml + batchHtml) || `<div class="text-center py-6 text-xs text-slate-500">No transactions recorded for ${esc(dateLabel)}.</div>`;
+}
+
+function renderAnnualAnalytics() {
+  renderCalendarDayInspector();
+  const filterEl = $('annual-month-filter');
+  if (!filterEl) return;
+  const currentVal = filterEl.value || 'ALL';
+  const yearOf = (m) => m.year || (String(m.month || '').match(/\d{4}/) || [''])[0];
+  const monthKey = (m) => {
+    const month = String(m.month || '');
+    const year = String(yearOf(m));
+    const isoMonth = month.match(/^(\d{4})-(\d{2})$/);
+    if (isoMonth) return `${isoMonth[1]}-${isoMonth[2]}`;
+    const monthName = month.replace(/\s+\d{4}$/, '');
+    const monthNumber = Number(monthName);
+    const date = monthNumber >= 1 && monthNumber <= 12
+      ? new Date(Number(year), monthNumber - 1, 1)
+      : new Date(`${monthName} 1, ${year}`);
+    return Number.isNaN(date.getTime()) ? '' : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
+  };
+  const monthlyRows = new Map((state.yearlyHistory || []).map((record) => [
+    monthKey(record),
+    {
+      ...record,
+      label: record.month,
+      year: yearOf(record),
+      kgSold: Number(record.kgSold) || 0,
+      posCashSales: Number(record.posCashSales) || 0,
+      subBulkSales: Number(record.subBulkSales) || 0,
+      receivables: Number(record.receivables) || 0,
+      expenses: Number(record.expenses) || 0
+    }
+  ]).filter(([key]) => key));
+  const posByMonth = new Map();
+  const receivablesById = new Map((state.receivablesList || []).map((record) => [String(record.id), record]));
+  (state.posSales || []).forEach((sale) => {
+    const match = String(sale.date || '').match(/^(\d{4})-(\d{2})-\d{2}$/);
+    if (!match) return;
+    const key = `${match[1]}-${match[2]}`;
+    if (!posByMonth.has(key)) posByMonth.set(key, { cashAndCollected: 0, pendingCredit: 0, kgSold: 0 });
+    const monthSales = posByMonth.get(key);
+    const amount = Number(sale.totalRs) || 0;
+    if (String(sale.payment).toUpperCase() === 'CREDIT') {
+      if (receivablesById.get(String(sale.id))?.status !== 'Collected') monthSales.pendingCredit += amount;
+      else monthSales.cashAndCollected += amount;
+    } else {
+      monthSales.cashAndCollected += amount;
+    }
+    monthSales.kgSold += Number(sale.totalKg) || 0;
+  });
+  posByMonth.forEach((totals, key) => {
+    const existing = monthlyRows.get(key);
+    const [year, monthNumber] = key.split('-');
+    const monthName = new Date(Number(year), Number(monthNumber) - 1, 1)
+      .toLocaleDateString('en-US', { month: 'long' });
+    monthlyRows.set(key, {
+      ...(existing || { subBulkSales: 0, expenses: 0 }),
+      month: existing?.month || monthName,
+      year: existing?.year || year,
+      label: existing?.label || `${monthName} ${year}`,
+      posCashSales: totals.cashAndCollected,
+      receivables: totals.pendingCredit,
+      kgSold: totals.kgSold
+    });
+  });
+  const monthlySourceRows = [...monthlyRows.values()]
+    .map((record) => ({ ...record, label: record.label || record.month, year: String(record.year || yearOf(record)) }))
+    .sort((a, b) => monthKey(b).localeCompare(monthKey(a)));
+
+  let sourceRows = [], colHeader = 'Period', headingText = 'Permanent Historical Sales & Financial Ledger';
+  if (archiveGranularity === 'WEEKLY') {
+    colHeader = 'Week & Date Range'; headingText = 'Weekly Sales, Dressed Volume & Receivables Breakdown';
+    sourceRows = state.weeklyHistory.map((w) => ({ ...w, label: w.week, year: w.year || '' }));
+  } else if (archiveGranularity === 'YEARLY') {
+    colHeader = 'Calendar Year'; headingText = 'Multi-Year Annual Summary (Stored Permanently)';
+    const groups = {};
+    monthlySourceRows.forEach((m) => {
+      const yr = yearOf(m);
+      if (!groups[yr]) groups[yr] = { label: `Year ${yr}`, year: yr, kgSold: 0, posCashSales: 0, subBulkSales: 0, receivables: 0, expenses: 0 };
+      ['kgSold', 'posCashSales', 'subBulkSales', 'receivables', 'expenses'].forEach((k) => { groups[yr][k] += Number(m[k] || 0); });
+    });
+    sourceRows = Object.values(groups);
+  } else {
+    colHeader = 'Month & Year';
+    headingText = archiveGranularity === 'LIFETIME' ? 'Complete All-Time Multi-Year Ledger' : 'Monthly Sales, Dressed Volume & Receivables Ledger';
+    sourceRows = monthlySourceRows;
+  }
+
+  $('period-col-header').innerText = colHeader;
+  $('period-table-heading').innerHTML = `<i class="fa-solid fa-chart-column text-yellow-400"></i> ${headingText}`;
+
+  const years = [...new Set(sourceRows.map((r) => r.year))];
+  filterEl.innerHTML = sourceRows.length
+    ? `<option value="ALL">All Stored Records (${sourceRows.length} Periods)</option>` +
+      years.map((y) => `<option value="YEAR-${y}">Filter Year: ${y}</option>`).join('') +
+      sourceRows.map((r) => `<option value="${esc(r.label)}">${esc(r.label)}</option>`).join('')
+    : '<option value="ALL">No historical periods</option>';
+  filterEl.value = [...filterEl.options].some((o) => o.value === currentVal) ? currentVal : 'ALL';
+
+  const f = filterEl.value;
+  const rows = f === 'ALL' ? sourceRows : f.startsWith('YEAR-') ? sourceRows.filter((r) => r.year === f.replace('YEAR-', '')) : sourceRows.filter((r) => r.label === f);
+  const receivablesForPeriod = (state.receivablesList || []).filter((receivable) => {
+    const date = String(receivable.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    return rows.some((row) => {
+      if (archiveGranularity === 'YEARLY') return date.startsWith(String(row.year || ''));
+      if (archiveGranularity === 'WEEKLY') {
+        const label = String(row.week || row.label || '');
+        const dates = label.match(/\d{4}-\d{2}-\d{2}/g);
+        if (dates?.length >= 2) return date >= dates[0] && date <= dates[1];
+        const isoWeek = label.match(/(\d{4})-?W(\d{1,2})/i);
+        if (isoWeek) {
+          const jan4 = new Date(Date.UTC(Number(isoWeek[1]), 0, 4));
+          const monday = new Date(jan4);
+          monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (Number(isoWeek[2]) - 1) * 7);
+          const weekStart = monday.toISOString().slice(0, 10);
+          const sunday = new Date(monday);
+          sunday.setUTCDate(monday.getUTCDate() + 6);
+          return date >= weekStart && date <= sunday.toISOString().slice(0, 10);
+        }
+        return false;
+      }
+      const month = monthKey(row);
+      return month ? date.slice(0, 7) === month : false;
+    });
+  });
+  const pendingForPeriod = receivablesForPeriod.filter((receivable) => receivable.status === 'Pending');
+
+  let sumGross = 0, sumCollected = 0, sumKg = 0;
+  $('annual-monthly-tbody').innerHTML = rows.length === 0
+    ? '<tr><td colspan="8" class="py-6 text-center text-sm text-slate-400">No historical sales or inventory records.</td></tr>'
+    : rows.map((m) => {
+    const totalSales = m.posCashSales + m.subBulkSales + m.receivables;
+    sumGross += totalSales; sumCollected += m.posCashSales + m.subBulkSales; sumKg += m.kgSold;
+    const net = totalSales - m.expenses;
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <td class="py-2.5 px-3 font-bold text-white">${esc(m.label)}</td>
+        <td class="py-2.5 px-3 text-right font-semibold text-sky-400">${m.kgSold.toLocaleString()} kg</td>
+        <td class="py-2.5 px-3 text-right text-slate-300">Rs. ${m.posCashSales.toLocaleString()}</td>
+        <td class="py-2.5 px-3 text-right text-slate-300">Rs. ${m.subBulkSales.toLocaleString()}</td>
+        <td class="py-2.5 px-3 text-right font-black text-yellow-400">Rs. ${totalSales.toLocaleString()}</td>
+        <td class="py-2.5 px-3 text-right font-bold text-red-400">Rs. ${m.receivables.toLocaleString()}</td>
+        <td class="py-2.5 px-3 text-right text-slate-400">Rs. ${m.expenses.toLocaleString()}</td>
+        <td class="py-2.5 px-3 text-right font-extrabold ${net >= 0 ? 'text-emerald-400">+' : 'text-red-400">-'} Rs. ${Math.abs(net).toLocaleString()}</td>
+      </tr>`;
+  }).join('');
+
+  const pendingTotal = pendingForPeriod.reduce((sum, receivable) => sum + Number(receivable.amount || 0), 0);
+  $('yr-kpi-sales').innerText = rows.length ? `Rs. ${sumGross.toLocaleString()}` : '—';
+  $('yr-kpi-collected').innerText = rows.length ? `Rs. ${sumCollected.toLocaleString()}` : '—';
+  $('yr-kpi-receivables').innerText = receivablesForPeriod.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
+  $('yr-kpi-rec-count').innerText = receivablesForPeriod.length
+    ? `${pendingForPeriod.length} pending hotel/customer accounts in selected period`
+    : 'No receivables in selected period';
+  $('yr-kpi-kg').innerText = rows.length ? `${sumKg.toLocaleString()} kg` : '—';
+  const snapshotCount = Object.keys(state.dailyVault || {}).length;
+  const periodCount = monthlySourceRows.length + state.weeklyHistory.length;
+  $('vault-record-counter').innerText = periodCount || snapshotCount
+    ? `${monthlySourceRows.length} Months • ${state.weeklyHistory.length} Weeks • ${snapshotCount} Daily Snapshots`
+    : 'No archived records yet';
+
+  $('receivables-tbody').innerHTML = state.receivablesList.length === 0
+    ? '<tr><td colspan="7" class="py-6 text-center text-sm text-slate-400">No receivables recorded.</td></tr>'
+    : state.receivablesList.map((r) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-2.5 px-3"><span class="font-bold text-yellow-400">${esc(r.id)}</span><span class="text-xs text-slate-400 block">${esc(r.date)}</span></td>
+      <td class="py-2.5 px-3 font-bold text-white">${esc(r.customer)}</td>
+      <td class="py-2.5 px-3 text-xs text-slate-400">${esc(r.phone)}</td>
+      <td class="py-2.5 px-3 text-xs text-slate-300">${esc(r.details)}</td>
+      <td class="py-2.5 px-3 text-right font-black ${r.status === 'Pending' ? 'text-red-400' : 'text-emerald-400'}">Rs. ${r.amount.toLocaleString()}</td>
+      <td class="py-2.5 px-3"><span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold ${r.status === 'Pending' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}">${esc(r.status)}</span></td>
+      <td class="py-2.5 px-3 text-right">${r.status === 'Pending'
+        ? `<button onclick="markReceivableCollected('${esc(r.id)}')" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold px-3 py-1 rounded-lg text-xs transition">Mark Collected</button>`
+        : `<span class="text-xs text-slate-500 font-semibold"><i class="fa-solid fa-check mr-1"></i>Settled</span>`}</td>
+    </tr>`).join('');
+
+  // printable statement
+  const selectedPeriodLabel = f === 'ALL' ? 'All available periods' : f.replace(/^YEAR-/, 'Year ');
+  $('ar-date').innerText = archiveDateRange
+    ? `${getTodayDate()} (Selected Date Range: ${archiveDateRange.from} to ${archiveDateRange.to}; Sales Filter: ${selectedPeriodLabel})`
+    : `${getTodayDate()} (Selected Period: ${selectedPeriodLabel}; Calendar Date: ${selectedArchiveDate})`;
+  $('ar-total-sales').innerText = rows.length ? `Rs. ${sumGross.toLocaleString()}` : '—';
+  $('ar-total-collected').innerText = rows.length ? `Rs. ${sumCollected.toLocaleString()}` : '—';
+  $('ar-total-receivables').innerText = receivablesForPeriod.length ? `Rs. ${pendingTotal.toLocaleString()}` : '—';
+  $('ar-total-kg').innerText = rows.length ? `${sumKg.toLocaleString()} kg` : '—';
+  $('ar-monthly-tbody').innerHTML = rows.length === 0
+    ? '<tr><td colspan="7" class="py-4 text-center text-slate-500">No historical sales recorded.</td></tr>'
+    : rows.map((m) => `
+    <tr>
+      <td class="py-1.5 px-2 border border-slate-300 font-bold">${esc(m.label)}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right">${m.kgSold.toLocaleString()} kg</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right">Rs. ${m.posCashSales.toLocaleString()}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right">Rs. ${m.subBulkSales.toLocaleString()}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right font-bold">Rs. ${(m.posCashSales + m.subBulkSales + m.receivables).toLocaleString()}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right text-red-700 font-semibold">Rs. ${m.receivables.toLocaleString()}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right">Rs. ${m.expenses.toLocaleString()}</td>
+    </tr>`).join('');
+
+  const snap = getDaySnapshot(selectedArchiveDate);
+  const printSales = archiveDateRange
+    ? (state.posSales || []).filter((sale) => sale.date >= archiveDateRange.from && sale.date <= archiveDateRange.to)
+    : snap.posSales;
+  const printInventoryRows = archiveDateRange ? [] : getDayInventoryRows(snap, printSales);
+  const printSalesTotal = printSales.reduce((total, sale) => total + Number(sale.totalRs || 0), 0);
+  const printSalesKg = printSales.reduce((total, sale) => total + Number(sale.totalKg || 0), 0);
+  const printSalesHeading = archiveDateRange
+    ? `POS Sales Details — ${archiveDateRange.from} to ${archiveDateRange.to}`
+    : `${selectedArchiveDate} POS Sales Details`;
+  $('ar-day-snapshot-print').classList.remove('hidden');
+  $('ar-day-snapshot-body').innerHTML = `
+    <h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">${esc(printSalesHeading)}</h5>
+    <table class="w-full text-left border-collapse border border-slate-300 text-[10px] mb-4">
+      <thead><tr class="bg-slate-200 text-slate-800 uppercase">
+        ${archiveDateRange ? '<th class="py-1 px-2 border border-slate-300">Date</th>' : ''}
+        <th class="py-1 px-2 border border-slate-300">Time / Receipt</th>
+        <th class="py-1 px-2 border border-slate-300">Customer</th>
+        <th class="py-1 px-2 border border-slate-300">Items Sold</th>
+        <th class="py-1 px-2 border border-slate-300">Payment</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Weight (kg)</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Total (Rs.)</th>
+      </tr></thead>
+      <tbody>${printSales.length ? printSales.map((sale) => `
+        <tr>
+          ${archiveDateRange ? `<td class="py-1 px-2 border border-slate-300">${esc(sale.date)}</td>` : ''}
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.time)}<span class="block font-mono">${esc(sale.id)}</span></td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.customer)}</td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.itemsSummary)}</td>
+          <td class="py-1 px-2 border border-slate-300">${esc(sale.payment)}</td>
+          <td class="py-1 px-2 border border-slate-300 text-right">${Number(sale.totalKg || 0).toFixed(2)}</td>
+          <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${Number(sale.totalRs || 0).toLocaleString()}</td>
+        </tr>`).join('') : `<tr><td colspan="${archiveDateRange ? 7 : 6}" class="py-2 px-2 border border-slate-300 text-center">No POS sales recorded for this period.</td></tr>`}
+      </tbody>
+      <tfoot><tr class="bg-slate-100 font-bold">
+        <td colspan="${archiveDateRange ? 5 : 4}" class="py-1 px-2 border border-slate-300 text-right">${archiveDateRange ? 'Period POS Total' : 'Selected Date POS Total'}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${printSalesKg.toFixed(2)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">Rs. ${printSalesTotal.toLocaleString()}</td>
+      </tr></tfoot>
+    </table>
+    ${archiveDateRange
+      ? `<p class="text-[11px] text-slate-600 mb-4">Inventory snapshots are daily; select a single date to print the inventory time-machine view.</p>`
+      : `<h5 class="font-black text-[11px] uppercase tracking-wider mb-2 text-slate-700">Selected Date Inventory & Itemized POS Audit — ${esc(selectedArchiveDate)}</h5>
+    <p class="text-[11px] font-bold">Calendar Date Inspected: ${esc(selectedArchiveDate)}</p>
+    <table class="w-full text-left border-collapse border border-slate-300 text-[10px]">
+      <thead><tr class="bg-slate-200 text-slate-800 uppercase">
+        <th class="py-1 px-2 border border-slate-300">Inventory Item</th><th class="py-1 px-2 border border-slate-300 text-right">Opening</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Added / Slaughter In</th><th class="py-1 px-2 border border-slate-300 text-right">POS Sold</th>
+        <th class="py-1 px-2 border border-slate-300 text-right">Closing Stock</th><th class="py-1 px-2 border border-slate-300 text-right">Rate / Unit</th></tr></thead>
+      <tbody>${printInventoryRows.length ? printInventoryRows.map((r) => `
+        <tr><td class="py-1 px-2 border border-slate-300 font-bold">${esc(r.name)}${r.source ? `<span class="block font-normal">${esc(r.source)}</span>` : ''}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${formatMovementQuantity(r.openingStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${r.addedStock === null ? '—' : `+${formatMovementQuantity(r.addedStock, r.unitLabel)}`}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">-${formatMovementQuantity(r.soldStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right font-bold">${formatMovementQuantity(r.closingStock, r.unitLabel)}</td>
+        <td class="py-1 px-2 border border-slate-300 text-right">${r.price === null ? '—' : `Rs. ${Number(r.price).toLocaleString()} / ${esc(r.unitLabel)}`}</td></tr>`).join('')
+        : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No inventory items recorded for this date.</td></tr>'}</tbody>
+    </table>`}`;
+
+  $('ar-receivables-tbody').innerHTML = receivablesForPeriod.length ? receivablesForPeriod.map((r) => `
+    <tr>
+      <td class="py-1.5 px-2 border border-slate-300 font-mono">${esc(r.id)} (${esc(r.date)})</td>
+      <td class="py-1.5 px-2 border border-slate-300 font-bold">${esc(r.customer)}</td>
+      <td class="py-1.5 px-2 border border-slate-300">${esc(r.phone)}</td>
+      <td class="py-1.5 px-2 border border-slate-300">${esc(r.details)}</td>
+      <td class="py-1.5 px-2 border border-slate-300 text-right font-bold">Rs. ${r.amount.toLocaleString()}</td>
+      <td class="py-1.5 px-2 border border-slate-300 font-semibold">${esc(r.status)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="6" class="py-2 px-2 border border-slate-300 text-center">No receivables recorded in the selected period.</td></tr>';
+}
+
+// ---------- MODULE 4: POS ----------
+const PIECES_PRICE_INCREASE_PER_KG = 200;
+
+function supportsChickenCutOption(item) {
+  if (!item || inventoryUnit(item) !== 'kg') return false;
+  const name = String(item.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return ['broiler chicken', 'curry chicken', 'parent chicken', 'parents chicken', 'parant chicken'].includes(name);
+}
+
+function isPiecesOptionSelected() {
+  return $('pos-chicken-cut-options')?.classList.contains('hidden') === false
+    && document.querySelector('input[name="pos-chicken-cut"]:checked')?.value === 'pieces';
+}
+
+function selectedPosUnitPrice(item) {
+  return inventoryPrice(item) + (supportsChickenCutOption(item) && isPiecesOptionSelected()
+    ? PIECES_PRICE_INCREASE_PER_KG : 0);
+}
+
+function selectPosProduct(id) {
+  const item = state.inventory.find((entry) => entry.id === id);
+  if (!item) return;
+  selectedPosCategoryId = id;
+  const unit = inventoryUnit(item);
+  const isKg = unit === 'kg';
+  $('pos-chicken-cut-options').classList.toggle('hidden', !supportsChickenCutOption(item));
+  const wholeOption = document.querySelector('input[name="pos-chicken-cut"][value="whole"]');
+  if (wholeOption) wholeOption.checked = true;
+  $('pos-selected-label').innerText = `Selected: ${item.name} (Rs. ${inventoryPrice(item)} ${inventoryPriceLabel(item)})`;
+  $('pos-quantity-title').innerText = isKg
+    ? '2. Enter Weight (kg) or Bill Amount (Rs.)'
+    : '2. Enter Whole Quantity & Add to Bill';
+  $('pos-kg-presets').classList.toggle('hidden', !isKg);
+  $('pos-kg-control').classList.toggle('hidden', !isKg);
+  $('pos-unit-control').classList.toggle('hidden', isKg);
+  $('pos-weight-input').value = '';
+  $('pos-amount-input').value = '';
+  $('pos-quantity-input').value = '';
+  if (!isKg) {
+    $('pos-unit-quantity-label').innerText = unit === 'packet'
+      ? `Quantity (whole ${inventoryUnitLabel(item)}s)` : 'Quantity (whole units)';
+  }
+  renderPosProducts();
+  updatePosLinePreview();
+}
+function setPosWeight(kg) { $('pos-weight-input').value = kg; updatePosLinePreview('weight'); }
+function updatePosLinePreview(source = 'refresh') {
+  if (!state) return;
+  const item = state.inventory.find((i) => i.id === selectedPosCategoryId);
+  if (!item) {
+    $('pos-selected-label').innerText = 'No inventory item selected';
+    return;
+  }
+  const unitPrice = selectedPosUnitPrice(item);
+  $('pos-selected-label').innerText = `Selected: ${item.name}${isPiecesOptionSelected() ? ' — Pieces' : ''} (Rs. ${unitPrice} ${inventoryPriceLabel(item)})`;
+  if (inventoryUnit(item) === 'kg') {
+    const weightInput = $('pos-weight-input');
+    const amountInput = $('pos-amount-input');
+    if (source === 'amount') {
+      if (amountInput.value === '') {
+        weightInput.value = '';
+      } else {
+        const amount = Number(amountInput.value);
+        if (Number.isFinite(amount) && amount >= 0 && unitPrice > 0) {
+          weightInput.value = (Math.round((amount / unitPrice) * 100) / 100).toFixed(2);
+        } else {
+          weightInput.value = '';
+        }
+      }
+    } else if (source === 'weight') {
+      const weight = Number(weightInput.value);
+      amountInput.value = Number.isFinite(weight) && weight > 0
+        ? String(Math.round(weight * unitPrice))
+        : '';
+    }
+  }
+}
+
+function addItemToPosCart() {
+  const item = state.inventory.find((i) => i.id === selectedPosCategoryId);
+  if (!item) return showToast('Select an inventory product first.', 'error');
+  const unit = inventoryUnit(item);
+  const quantity = unit === 'kg' ? Number($('pos-weight-input').value) : Number($('pos-quantity-input').value);
+  const wholeQuantity = unit !== 'kg';
+  if (!Number.isFinite(quantity) || quantity <= 0 || (wholeQuantity && !Number.isInteger(quantity))) {
+    return showToast(wholeQuantity ? 'Enter a positive whole packet/unit quantity.' : 'Please enter a valid weight (kg).', 'error');
+  }
+  const isPieces = supportsChickenCutOption(item) && isPiecesOptionSelected();
+  const listedUnitPrice = inventoryPrice(item) + (isPieces ? PIECES_PRICE_INCREASE_PER_KG : 0);
+  const lineTotal = unit === 'kg' ? Number($('pos-amount-input').value) : Math.round(quantity * listedUnitPrice);
+  if (!Number.isFinite(lineTotal) || lineTotal < 0) {
+    return showToast('Enter a valid bill amount.', 'error');
+  }
+  const unitPrice = quantity > 0 ? lineTotal / quantity : listedUnitPrice;
+  const existing = posCart.find((c) => c.id === item.id && Boolean(c.isPieces) === isPieces && !c.isLoyaltyFreeGiveaway);
+  if (existing) {
+    const previousQuantity = existing.quantity;
+    const previousRetailUnitPrice = Number(existing.retailUnitPrice ?? existing.unitPrice);
+    existing.quantity = unit === 'kg' ? +(existing.quantity + quantity).toFixed(2) : existing.quantity + quantity;
+    existing.lineTotal += lineTotal;
+    existing.unitPrice = existing.lineTotal / existing.quantity;
+    existing.retailUnitPrice = (previousRetailUnitPrice * previousQuantity + unitPrice * quantity) / existing.quantity;
+  } else {
+    posCart.push({
+      id: item.id, name: item.name, unitType: unit, ...(isPieces ? { isPieces: true } : {}),
+      quantity: unit === 'kg' ? +quantity.toFixed(2) : quantity,
+      packWeightGrams: Number(item.packWeightGrams || 0),
+      unitPrice, retailUnitPrice: unitPrice, lineTotal
+    });
+  }
+  renderPosCart();
+  showToast(`Added ${quantity} ${inventoryUnitLabel(item)}${quantity === 1 ? '' : 's'} of ${item.name} to bill`, 'info');
+}
+function removePosCartItem(idx) { posCart.splice(idx, 1); renderPosCart(); }
+function clearPosCart() {
+  posCart = [];
+  $('pos-discount').value = 0;
+  $('pos-discount-type').value = 'percentage';
+  $('pos-cash-received').value = '';
+  $('pos-extra-cash-kept').value = '';
+  $('pos-extra-cash-reason').value = '';
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
+  onPosFulfilmentChanged();
+}
+
+function isPosDelivery() {
+  return document.querySelector('input[name="pos-fulfilment"]:checked')?.value === 'delivery';
+}
+
+function onPosFulfilmentChanged() {
+  const isDelivery = isPosDelivery();
+  $('pos-delivery-fee-wrap').classList.toggle('hidden', !isDelivery);
+  $('pos-delivery-fee-summary').classList.toggle('hidden', !isDelivery);
+  $('pos-delivery-fee-summary').classList.toggle('flex', isDelivery);
+  renderPosCart();
+}
+
+function renderPosCart() {
+  const listEl = $('pos-cart-list');
+  listEl.innerHTML = posCart.length === 0
+    ? `<div class="text-center py-8 text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">No items in bill yet. Search and select an item to add.</div>`
+    : posCart.map((c, idx) => `
+      <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border ${c.isLoyaltyFreeGiveaway ? 'border-emerald-500/40' : 'border-slate-800'} text-xs">
+        <div>
+          <p class="font-bold text-white">${esc(c.name)}${c.isPieces ? ' — Pieces' : ''}</p>
+          <p class="text-slate-400">${c.quantity.toLocaleString()} ${esc(inventoryUnitLabel(c))}${c.quantity === 1 ? '' : 's'}${c.isLoyaltyFreeGiveaway ? ' — FREE LOYALTY GIVEAWAY' : ''}</p>
+          ${!c.isLoyaltyFreeGiveaway && $('pos-pay-method').value === 'CREDIT'
+            ? `<label class="mt-1 flex items-center gap-1 text-[11px] text-yellow-300">Unit price (Rs. ${esc(inventoryPriceLabel(c))})<input type="number" min="0" step="0.01" value="${Number(c.unitPrice)}" onchange="updatePosCartUnitPrice(${idx}, this.value)" class="w-24 rounded bg-slate-800 px-2 py-1 text-right text-white"></label>`
+            : !c.isLoyaltyFreeGiveaway
+              ? `<p class="text-slate-400">× Rs. ${c.unitPrice.toLocaleString()} ${esc(inventoryPriceLabel(c))}</p>`
+              : ''}
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="font-extrabold ${c.isLoyaltyFreeGiveaway ? 'text-emerald-400' : 'text-yellow-400'} text-sm">${c.isLoyaltyFreeGiveaway ? 'FREE' : `Rs. ${c.lineTotal.toLocaleString()}`}</span>
+          <button onclick="removePosCartItem(${idx})" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>`).join('');
+  const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
+  const totalKg = posCart.filter((c) => c.unitType === 'kg').reduce((s, c) => s + c.quantity, 0);
+  const discount = calculatePosDiscount(subtotal);
+  const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
+  const grandTotal = Math.max(0, subtotal - discount) + deliveryFee;
+  $('pos-subtotal').innerText = `Rs. ${subtotal.toLocaleString()}`;
+  $('pos-delivery-fee-total').innerText = `Rs. ${deliveryFee.toLocaleString()}`;
+  $('pos-total-weight').innerText = `${totalKg.toFixed(2)} kg total dressed weight`;
+  $('pos-grand-total').innerText = `Rs. ${grandTotal.toLocaleString()}`;
+  updatePosCashSummary();
+  updatePosLoyaltySummary();
+}
+
+function updatePosCartUnitPrice(index, value) {
+  const item = posCart[index];
+  const unitPrice = Number(value);
+  if (!item || $('pos-pay-method').value !== 'CREDIT') return;
+  if (String(value).trim() === '' || !Number.isFinite(unitPrice) || unitPrice < 0) {
+    showToast('Enter a valid non-negative unit price.', 'error');
+    return renderPosCart();
+  }
+  item.unitPrice = unitPrice;
+  item.lineTotal = Math.round((unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+  renderPosCart();
+}
+
+function calculatePosDiscount(subtotal) {
+  const input = $('pos-discount');
+  const discountType = $('pos-discount-type').value;
+  const value = Math.max(0, Number(input.value) || 0);
+  let discount;
+  if (discountType === 'amount') {
+    input.max = Math.max(0, subtotal);
+    discount = Math.min(Math.max(0, subtotal), value);
+    input.value = discount;
+  } else {
+    const percentage = Math.min(100, value);
+    input.max = 100;
+    input.value = percentage;
+    discount = subtotal * percentage / 100;
+  }
+  discount = Math.round(discount * 100) / 100;
+  $('pos-discount-amount').innerText = `Rs. ${discount.toLocaleString()}`;
+  return discount;
+}
+
+function onPosDiscountTypeChanged() {
+  const isAmount = $('pos-discount-type').value === 'amount';
+  $('pos-discount').setAttribute('aria-label', isAmount ? 'Discount amount in rupees' : 'Discount percentage');
+  $('pos-discount').value = 0;
+  renderPosCart();
+}
+
+function updatePosCashPayment() {
+  const payment = $('pos-pay-method').value;
+  const cashPayment = payment === 'CASH';
+  $('pos-cash-payment').classList.toggle('hidden', !cashPayment);
+  $('pos-change-summary').classList.toggle('hidden', !cashPayment);
+  if (!cashPayment) {
+    $('pos-extra-cash-kept').value = '';
+    $('pos-extra-cash-reason').value = '';
+  }
+  if (payment !== 'CREDIT') {
+    posCart.forEach((item) => {
+      if (item.isLoyaltyFreeGiveaway) return;
+      item.retailUnitPrice = Number(item.retailUnitPrice ?? item.unitPrice);
+      item.unitPrice = item.retailUnitPrice;
+      item.lineTotal = Math.round((item.unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+    });
+  } else {
+    posCart.forEach((item) => {
+      if (!item.isLoyaltyFreeGiveaway && !Number.isFinite(Number(item.retailUnitPrice))) {
+        item.retailUnitPrice = item.unitPrice;
+      }
+    });
+  }
+  renderPosCart();
+  updatePosCashSummary();
+}
+
+function updatePosCashSummary() {
+  if (!$('pos-pay-method') || $('pos-pay-method').value !== 'CASH') return;
+  const subtotal = posCart.reduce((sum, item) => sum + item.lineTotal, 0);
+  const discount = calculatePosDiscount(subtotal);
+  const deliveryFee = isPosDelivery() ? Math.max(0, Number($('pos-delivery-fee').value) || 0) : 0;
+  const total = Math.max(0, subtotal - discount) + deliveryFee;
+  const extraCashInput = $('pos-extra-cash-kept').value.trim();
+  const extraCashKept = extraCashInput === '' ? 0 : Number(extraCashInput);
+  $('pos-extra-cash-reason').required = Number.isFinite(extraCashKept) && extraCashKept > 0;
+  $('pos-extra-cash-reason-required').classList.toggle('hidden', !$('pos-extra-cash-reason').required);
+  const enteredAmount = $('pos-cash-received').value.trim();
+  const cashReceived = enteredAmount === '' ? total + (Number.isFinite(extraCashKept) ? extraCashKept : 0) : Number(enteredAmount);
+  const changeAmount = $('pos-change-amount');
+  const changeLabel = $('pos-change-label');
+
+  if (!Number.isFinite(extraCashKept) || extraCashKept < 0 ||
+      !Number.isFinite(cashReceived) || cashReceived < total + extraCashKept) {
+    const remaining = Math.max(0, total + (Number.isFinite(extraCashKept) ? extraCashKept : 0) -
+      (Number.isFinite(cashReceived) ? cashReceived : 0));
+    changeLabel.innerText = 'Remaining cash due';
+    changeAmount.innerText = `Rs. ${remaining.toLocaleString()}`;
+    changeAmount.classList.remove('text-emerald-300');
+    changeAmount.classList.add('text-amber-300');
+    return;
+  }
+
+  changeLabel.innerText = extraCashKept > 0 ? 'Balance to return after extra cash kept' : 'Balance to return';
+  changeAmount.innerText = `Rs. ${(cashReceived - total - extraCashKept).toLocaleString()}`;
+  changeAmount.classList.remove('text-amber-300');
+  changeAmount.classList.add('text-emerald-300');
+}
+
+function getPosLoyaltyCustomer(phone = $('pos-cust-phone').value) {
+  const key = phoneKey(phone);
+  return key.length >= 7
+    ? state.customers.find((entry) => phoneKey(entry.phone) === key)
+    : null;
+}
+
+function getPosLoyaltyPlan(itemsDetails, customerRecord, loyaltyEnabled = true) {
+  if (!loyaltyEnabled) {
+    return {
+      pointsEarned: 0, pointsAvailable: 0, loyaltyKgRemainderAfter: 0, chicken: null
+    };
+  }
+  const qualifyingKg = itemsDetails
+    .filter((item) => item.unitType === 'kg' && !item.isLoyaltyFreeGiveaway)
+    .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const accumulatedKg = Math.max(0, Number(customerRecord?.loyaltyKgRemainder || 0)) + qualifyingKg;
+  const pointsEarned = Math.floor(accumulatedKg + 0.0000001);
+  const loyaltyKgRemainderAfter = +(accumulatedKg - pointsEarned).toFixed(4);
+  const pointsAvailable = Math.max(0, Number(customerRecord?.loyaltyPoints || 0)) + pointsEarned;
+  const chickenItems = state.inventory.filter((item) => inventoryUnit(item) === 'kg' && /chicken/i.test(item.name || ''));
+  const chicken = chickenItems.find((item) => String(item.name).trim().toLowerCase() === 'chicken') || chickenItems[0];
+  const chickenPurchasedKg = chicken
+    ? itemsDetails.filter((item) => String(item.id) === String(chicken.id) && !item.isLoyaltyFreeGiveaway)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    : 0;
+  const giveawaysAlreadyAddedKg = chicken
+    ? itemsDetails.filter((item) => String(item.id) === String(chicken.id) && item.isLoyaltyFreeGiveaway)
+      .reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+    : 0;
+  const giveawaysAlreadyAdded = Math.floor((giveawaysAlreadyAddedKg + 0.0000001) / LOYALTY_REWARD_KG);
+
+  return {
+    pointsEarned,
+    pointsAvailable,
+    loyaltyKgRemainderAfter,
+    giveawaysAlreadyAdded,
+    chickenStockAvailable: chicken ? Math.max(0, inventoryStock(chicken) - chickenPurchasedKg - giveawaysAlreadyAddedKg) : 0,
+    chicken
+  };
+}
+
+function updatePosLoyaltySummary() {
+  const summary = $('pos-loyalty-summary');
+  if (!summary || !state) return;
+  const phone = $('pos-cust-phone').value.trim();
+  const customerRecord = getPosLoyaltyCustomer(phone);
+  const key = phoneKey(phone);
+  if (key.length < 7) {
+    summary.innerText = 'Enter a customer phone number to track points. Earn 1 point per 1 kg of meat; 50 points = 500 g Chicken free.';
+    return;
+  }
+
+  const basketItems = posCart.map((item) => ({ ...item }));
+  const plan = getPosLoyaltyPlan(basketItems, customerRecord);
+  const currentPoints = Math.max(0, Number(customerRecord?.loyaltyPoints || 0));
+  const rewardsAvailable = Math.floor(plan.pointsAvailable / LOYALTY_POINTS_PER_REWARD);
+  const chickenAvailable = Math.floor((plan.chickenStockAvailable + 0.0000001) / LOYALTY_REWARD_KG);
+  const canAddReward = rewardsAvailable > plan.giveawaysAlreadyAdded && chickenAvailable > 0;
+  const customerLabel = customerRecord ? `${currentPoints} point${currentPoints === 1 ? '' : 's'} balance`
+    : 'New loyalty customer • 0 points';
+  const earnedLabel = plan.pointsEarned
+    ? `This bill earns ${plan.pointsEarned} point${plan.pointsEarned === 1 ? '' : 's'}.`
+    : 'Add 1 kg of meat to earn 1 point.';
+  let rewardLabel = ` ${LOYALTY_POINTS_PER_REWARD - (plan.pointsAvailable % LOYALTY_POINTS_PER_REWARD)} more point${LOYALTY_POINTS_PER_REWARD - (plan.pointsAvailable % LOYALTY_POINTS_PER_REWARD) === 1 ? '' : 's'} to a free 500 g Chicken reward.`;
+  if (plan.pointsAvailable >= LOYALTY_POINTS_PER_REWARD) {
+    rewardLabel = canAddReward
+      ? ` ${rewardsAvailable - plan.giveawaysAlreadyAdded} free Chicken reward${rewardsAvailable - plan.giveawaysAlreadyAdded === 1 ? '' : 's'} available.`
+      : chickenAvailable < 1
+        ? ' Reward available, but there is not enough Chicken stock.'
+        : ' Your available free Chicken reward is already on this bill.';
+  }
+  const prompt = canAddReward
+    ? '<button type="button" onclick="addPosLoyaltyGiveaway()" class="mt-2 block rounded-lg bg-emerald-400 px-3 py-1.5 font-bold text-slate-950 hover:bg-emerald-300">Add 500 g Chicken Loyalty Free Giveaway (50 points)</button>'
+    : '';
+  summary.innerHTML = `${esc(customerLabel)}. ${esc(earnedLabel)} 50 points = 500 g Chicken free.${esc(rewardLabel)}${prompt}`;
+}
+
+function addPosLoyaltyGiveaway() {
+  const customerRecord = getPosLoyaltyCustomer();
+  if (phoneKey($('pos-cust-phone').value).length < 7) {
+    return showToast('Enter the loyalty customer phone number before adding a reward.', 'error');
+  }
+  const plan = getPosLoyaltyPlan(posCart, customerRecord);
+  if (plan.pointsAvailable < (plan.giveawaysAlreadyAdded + 1) * LOYALTY_POINTS_PER_REWARD) {
+    return showToast('The customer needs 50 available points for each 500 g Chicken reward.', 'error');
+  }
+  if (!plan.chicken || plan.chickenStockAvailable < LOYALTY_REWARD_KG) {
+    return showToast('There is not enough Chicken stock to add the loyalty giveaway.', 'error');
+  }
+  const chicken = plan.chicken;
+  posCart.push({
+    id: chicken.id, name: `${chicken.name} - Loyalty Free Giveaway`,
+    unitType: 'kg', quantity: LOYALTY_REWARD_KG, packWeightGrams: 0,
+    unitPrice: inventoryPrice(chicken), lineTotal: 0, isLoyaltyFreeGiveaway: true
+  });
+  renderPosCart();
+  showToast('Added 500 g Chicken Loyalty Free Giveaway to the bill.', 'success');
+}
+
+function lookupPosCustomer() {
+  const phone = $('pos-cust-phone').value.trim();
+  const customer = getPosLoyaltyCustomer(phone);
+  const nameInput = $('pos-cust-name');
+  const status = $('pos-customer-status');
+  if (customer) {
+    nameInput.value = customer.name;
+    nameInput.readOnly = true;
+    status.className = 'min-h-4 text-[11px] text-emerald-400 mb-2';
+    status.innerText = `Loyalty customer • ${Number(customer.visitCount || 0)} previous visits • Rs. ${Number(customer.totalSpent || 0).toLocaleString()} spent`;
+  } else {
+    if (nameInput.readOnly) nameInput.value = '';
+    nameInput.readOnly = false;
+    status.className = 'min-h-4 text-[11px] text-slate-400 mb-2';
+    status.innerText = phone ? 'New loyalty customer. A name is optional; the phone number tracks points.' : 'Customer details are optional. A phone number is needed for loyalty tracking.';
+  }
+  updatePosLoyaltySummary();
+}
+
+function completePosSale() {
+  if (posCart.length === 0) return showToast('Please add at least one item to the bill.', 'error');
+  const customerPhone = $('pos-cust-phone').value.trim();
+  const customerPhoneKey = phoneKey(customerPhone);
+  if (customerPhone && (customerPhoneKey.length < 7 || customerPhoneKey.length > 15)) {
+    return showToast('Enter a valid phone number or leave it blank.', 'error');
+  }
+  const customerRecord = customerPhoneKey
+    ? state.customers.find((entry) => phoneKey(entry.phone) === customerPhoneKey)
+    : null;
+  const enteredName = $('pos-cust-name').value.trim();
+  const customer = customerRecord ? customerRecord.name : (enteredName || (customerPhoneKey ? 'Loyalty Customer' : 'Walk-in Customer'));
+  const payment = $('pos-pay-method').value;
+  const subtotal = posCart.reduce((s, c) => s + c.lineTotal, 0);
+  const discount = calculatePosDiscount(subtotal);
+  const delivery = isPosDelivery();
+  const deliveryFeeInput = $('pos-delivery-fee').value.trim();
+  const deliveryFeeRs = delivery ? Number(deliveryFeeInput) : 0;
+  if (delivery && (deliveryFeeInput === '' || !Number.isInteger(deliveryFeeRs) || deliveryFeeRs < 0)) {
+    return showToast('Enter a valid whole-number delivery fee in rupees.', 'error');
+  }
+  const grandTotal = Math.max(0, subtotal - discount) + deliveryFeeRs;
+  const extraCashInput = $('pos-extra-cash-kept').value.trim();
+  const extraCashKeptRs = payment === 'CASH' && extraCashInput !== '' ? Number(extraCashInput) : 0;
+  const extraCashReason = payment === 'CASH' ? $('pos-extra-cash-reason').value.trim() : '';
+  if (!Number.isFinite(extraCashKeptRs) || extraCashKeptRs < 0) {
+    return showToast('Enter a valid non-negative extra cash amount.', 'error');
+  }
+  if (extraCashKeptRs > 0 && !extraCashReason) {
+    return showToast('Enter a reason for keeping extra cash.', 'error');
+  }
+  const cashReceivedInput = $('pos-cash-received').value.trim();
+  const cashReceivedRs = payment !== 'CASH'
+    ? 0
+    : cashReceivedInput === '' ? grandTotal + extraCashKeptRs : Number(cashReceivedInput);
+  if (payment === 'CASH' && (!Number.isFinite(cashReceivedRs) || cashReceivedRs < grandTotal + extraCashKeptRs)) {
+    return showToast(`Enter at least Rs. ${(grandTotal + extraCashKeptRs).toLocaleString()} received from the customer.`, 'error');
+  }
+  const changeRs = payment === 'CASH' ? cashReceivedRs - grandTotal - extraCashKeptRs : 0;
+  const receiptId = 'POS-' + Date.now().toString().slice(-7);
+  const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const itemsBreakdown = {};
+  const itemsDetails = [];
+  posCart.forEach((ci) => {
+    const inv = state.inventory.find((i) => String(i.id) === String(ci.id));
+    if (inv && ci.unitType === 'kg' && !ci.isLoyaltyFreeGiveaway) {
+      itemsBreakdown[ci.id] = (itemsBreakdown[ci.id] || 0) + ci.quantity;
+    }
+    itemsDetails.push({
+      id: ci.id, name: ci.name, unitType: ci.unitType, quantity: ci.quantity,
+      unitLabel: inventoryUnitLabel(ci), unitPrice: ci.unitPrice,
+      weightKg: ci.unitType === 'kg' ? ci.quantity : 0,
+      packWeightGrams: ci.packWeightGrams, lineTotal: ci.lineTotal,
+      ...(ci.isPieces ? { isPieces: true } : {}),
+      ...(ci.isLoyaltyFreeGiveaway ? { isLoyaltyFreeGiveaway: true } : {})
+    });
+  });
+  posCart.filter((item) => item.isLoyaltyFreeGiveaway && item.unitType === 'kg')
+    .forEach((item) => { itemsBreakdown[item.id] = (itemsBreakdown[item.id] || 0) + item.quantity; });
+  const loyaltyPlan = getPosLoyaltyPlan(itemsDetails, customerRecord, customerPhoneKey.length >= 7);
+  const loyaltyGiveawayKg = posCart.filter((item) => item.isLoyaltyFreeGiveaway && item.unitType === 'kg')
+    .reduce((sum, item) => sum + item.quantity, 0);
+  const loyaltyPointsRedeemed = customerPhoneKey.length >= 7
+    ? Math.round(loyaltyGiveawayKg / LOYALTY_REWARD_KG) * LOYALTY_POINTS_PER_REWARD
+    : 0;
+  if (loyaltyPointsRedeemed > loyaltyPlan.pointsAvailable) {
+    return showToast('The customer does not have enough loyalty points for the selected giveaway.', 'error');
+  }
+  const chickenGiveaway = posCart.filter((item) => item.isLoyaltyFreeGiveaway);
+  if (chickenGiveaway.some((item) => customerPhoneKey.length < 7)) {
+    return showToast('A loyalty customer phone number is required to add a free giveaway.', 'error');
+  }
+  const pointsBalanceAfter = loyaltyPlan.pointsAvailable - loyaltyPointsRedeemed;
+  const itemsSummary = itemsDetails.map((item) =>
+    `${item.name}${item.isPieces ? ' — Pieces' : ''} (${item.quantity} ${item.unitLabel}${Number(item.quantity) === 1 ? '' : 's'})`
+  ).join(', ');
+
+  pendingPosSale = {
+    id: receiptId, date: getTodayDate(), time: nowTime, customer, customerPhone,
+    dailyCustomerNumber: getNextDailyCustomerNumber(getTodayDate()),
+    customerPhoneKey, enteredName, itemsSummary, itemsBreakdown, itemsDetails,
+    totalKg: +posCart.filter((item) => item.unitType === 'kg').reduce((sum, item) => sum + item.quantity, 0).toFixed(2),
+    payment, subtotal, discount, delivery, deliveryFeeRs, totalRs: grandTotal, cashReceivedRs, changeRs,
+    extraCashKeptRs, extraCashReason,
+    discountType: $('pos-discount-type').value,
+    discountValue: Math.max(0, Number($('pos-discount').value) || 0),
+    loyaltyPointsEarned: customerPhoneKey ? loyaltyPlan.pointsEarned : 0,
+    loyaltyPointsRedeemed,
+    loyaltyPointsBalanceAfter: customerPhoneKey ? pointsBalanceAfter : 0,
+    loyaltyKgRemainderAfter: customerPhoneKey ? loyaltyPlan.loyaltyKgRemainderAfter : 0,
+    loyaltyFreeGiveawayKg: customerPhoneKey ? loyaltyGiveawayKg : 0
+  };
+  renderPosSaleReceipt(pendingPosSale);
+  $('receipt-review-note').classList.remove('hidden');
+  $('receipt-preview-actions').classList.remove('hidden');
+  $('receipt-saved-actions').classList.add('hidden');
+  $('receipt-modal').classList.remove('hidden');
+}
+
+function renderPosSaleReceipt(sale) {
+  $('rc-id').innerText = `#${sale.id}`;
+  $('rc-customer-count').innerText = String(getDailyCustomerNumber(sale));
+  $('rc-customer').innerText = sale.customer;
+  $('rc-phone').innerText = sale.customerPhone || '—';
+  $('rc-date').innerText = `${sale.date} ${sale.time}`;
+  $('rc-payment').innerText = sale.payment;
+  $('rc-items').innerHTML = [
+    ...(sale.itemsDetails || []).filter((item) => !item.isLoyaltyFreeGiveaway),
+    ...(sale.itemsDetails || []).filter((item) => item.isLoyaltyFreeGiveaway)
+  ].map((item) => `
+    <div class="grid grid-cols-12 ${item.isLoyaltyFreeGiveaway ? 'font-bold text-emerald-700' : ''}"><span class="col-span-6 truncate">${esc(item.name)}${item.isPieces ? ' — Pieces' : ''}</span><span class="col-span-2 text-right">${Number(item.quantity).toLocaleString()} ${esc(item.unitLabel)}</span><span class="col-span-4 text-right">${item.isLoyaltyFreeGiveaway ? 'FREE' : `Rs.${Number(item.lineTotal).toLocaleString()}`}</span></div>`).join('');
+  $('rc-subtotal').innerText = `Rs. ${sale.subtotal.toLocaleString()}`;
+  $('rc-discount').innerText = `- Rs. ${sale.discount.toLocaleString()}`;
+  $('rc-delivery-fee-row').classList.toggle('hidden', !sale.delivery);
+  $('rc-delivery-fee').innerText = `Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}`;
+  $('rc-extra-cash-kept-row').classList.toggle('hidden', Number(sale.extraCashKeptRs || 0) <= 0);
+  $('rc-extra-cash-kept').innerText = `Rs. ${Number(sale.extraCashKeptRs || 0).toLocaleString()}`;
+  $('rc-total').innerText = `Rs. ${sale.totalRs.toLocaleString()}`;
+  const cashPayment = sale.payment === 'CASH';
+  $('rc-cash-paid-row').classList.toggle('hidden', !cashPayment);
+  $('rc-cash-change-row').classList.toggle('hidden', !cashPayment);
+  $('rc-cash-paid').innerText = `Rs. ${Number(sale.cashReceivedRs ?? sale.totalRs).toLocaleString()}`;
+  $('rc-cash-change').innerText = `Rs. ${Number(sale.changeRs || 0).toLocaleString()}`;
+  const loyaltyCustomer = sale.customerPhoneKey || phoneKey(sale.customerPhone);
+  $('rc-loyalty').innerText = loyaltyCustomer
+    ? `${Number(sale.loyaltyPointsEarned || 0)} earned • ${sale.loyaltyRedemptionPrinted ? `${Number(sale.loyaltyPointsRedeemed || 0)} redeemed` : `${Number(sale.loyaltyPointsRedeemed || 0)} will be redeemed after printing`} • ${Number(sale.loyaltyPointsBalanceAfter || 0) + (sale.loyaltyRedemptionPrinted ? 0 : Number(sale.loyaltyPointsRedeemed || 0))} current points`
+    : 'Add a customer phone number to earn points.';
+  $('rc-loyalty-giveaway').innerText = sale.loyaltyFreeGiveawayKg
+    ? `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. ${sale.loyaltyRedemptionPrinted ? 'Points were reset after the original print.' : 'Points will reset after printing.'}`
+    : '50 points = 500 g Chicken free';
+}
+
+function editPosBill() {
+  if (!pendingPosSale) return;
+  pendingPosSale = null;
+  $('receipt-modal').classList.add('hidden');
+}
+
+function confirmPosSale() {
+  const sale = pendingPosSale;
+  if (!sale) return showToast('No pending bill to save.', 'error');
+
+  const quantities = new Map();
+  sale.itemsDetails.forEach((item) => {
+    const key = String(item.id);
+    quantities.set(key, (quantities.get(key) || 0) + Number(item.quantity));
+  });
+  for (const [id, quantity] of quantities) {
+    const item = state.inventory.find((entry) => String(entry.id) === id);
+    if (!item) return showToast('An item in this bill no longer exists. Review the bill before saving.', 'error');
+  }
+
+  quantities.forEach((quantity, id) => {
+    const item = state.inventory.find((entry) => String(entry.id) === id);
+    if (inventoryUnit(item) === 'kg') item.stockKg = +(Number(item.stockKg || 0) - quantity).toFixed(2);
+    else item.stockQuantity = Number(item.stockQuantity || 0) - quantity;
+  });
+
+  let customerRecord = sale.customerPhoneKey
+    ? state.customers.find((entry) => phoneKey(entry.phone) === sale.customerPhoneKey)
+    : null;
+  if (!customerRecord && sale.customerPhoneKey) {
+    customerRecord = {
+      id: sale.customerPhoneKey, name: sale.enteredName || sale.customer, phone: sale.customerPhone,
+      visitCount: 0, totalSpent: 0, lastVisit: '', loyaltyPoints: 0, loyaltyKgRemainder: 0
+    };
+    state.customers.unshift(customerRecord);
+  }
+  if (customerRecord) {
+    customerRecord.visitCount = Number(customerRecord.visitCount || 0) + 1;
+    customerRecord.totalSpent = Number(customerRecord.totalSpent || 0) + sale.totalRs;
+    customerRecord.lastVisit = sale.date;
+    customerRecord.loyaltyPoints = Math.max(0, Number(customerRecord.loyaltyPoints || 0))
+      + Number(sale.loyaltyPointsEarned || 0);
+    customerRecord.loyaltyKgRemainder = sale.loyaltyKgRemainderAfter;
+  }
+  state.posSales.unshift({
+    id: sale.id, date: sale.date, time: sale.time, customer: sale.customer, customerPhone: sale.customerPhone,
+    dailyCustomerNumber: sale.dailyCustomerNumber,
+    itemsSummary: sale.itemsSummary, itemsBreakdown: sale.itemsBreakdown, itemsDetails: sale.itemsDetails,
+    totalKg: sale.totalKg, payment: sale.payment, subtotal: sale.subtotal, discount: sale.discount,
+    discountType: sale.discountType, discountValue: sale.discountValue, totalRs: sale.totalRs,
+    delivery: sale.delivery, deliveryFeeRs: sale.deliveryFeeRs,
+    cashReceivedRs: sale.cashReceivedRs, changeRs: sale.changeRs,
+    extraCashKeptRs: sale.extraCashKeptRs, extraCashReason: sale.extraCashReason,
+    loyaltyPointsEarned: sale.loyaltyPointsEarned, loyaltyPointsRedeemed: sale.loyaltyPointsRedeemed,
+    loyaltyPointsBalanceAfter: sale.loyaltyPointsBalanceAfter, loyaltyFreeGiveawayKg: sale.loyaltyFreeGiveawayKg
+  });
+  if (sale.payment === 'CREDIT') {
+    state.receivablesList.unshift({
+      id: sale.id, date: sale.date, customer: sale.customer, phone: sale.customerPhone,
+      details: `${sale.itemsSummary}${sale.delivery ? ` • Delivery fee Rs. ${Number(sale.deliveryFeeRs || 0).toLocaleString()}` : ''}`,
+      amount: sale.totalRs, status: 'Pending'
+    });
+  }
+
+  pendingPosSale = null;
+  posCart = [];
+  $('pos-cust-phone').value = '';
+  $('pos-cust-name').value = '';
+  $('pos-cash-received').value = '';
+  $('pos-extra-cash-kept').value = '';
+  $('pos-extra-cash-reason').value = '';
+  $('pos-delivery-fee').value = '';
+  document.querySelector('input[name="pos-fulfilment"][value="counter"]').checked = true;
+  onPosFulfilmentChanged();
+  $('pos-cust-name').readOnly = false;
+  $('pos-customer-status').innerText = '';
+  updatePosLoyaltySummary();
+  $('pos-discount').value = 0;
+  $('pos-discount-type').value = 'percentage';
+  updatePosCashSummary();
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.remove('hidden');
+  $('receipt-close-button').classList.toggle('hidden', sale.loyaltyPointsRedeemed > 0);
+  $('receipt-print-button').innerText = sale.loyaltyPointsRedeemed > 0
+    ? 'Print Receipt & Redeem Points' : 'Print Thermal Receipt';
+  pendingReceiptRedemptionSaleId = sale.loyaltyPointsRedeemed > 0 ? sale.id : null;
+  saveState();
+  showToast(`Sale ${sale.id} saved! Inventory updated and receipt ready.`, 'success');
+}
+function closeReceiptModal() {
+  if (pendingReceiptRedemptionSaleId) {
+    return showToast('Print this receipt to complete the loyalty point redemption.', 'error');
+  }
+  pendingPosSale = null;
+  $('receipt-modal').classList.add('hidden');
+  $('receipt-review-note').classList.add('hidden');
+  $('receipt-preview-actions').classList.add('hidden');
+  $('receipt-saved-actions').classList.add('hidden');
+  $('receipt-close-button').classList.remove('hidden');
+  $('receipt-print-button').innerText = 'Print Thermal Receipt';
+}
+
+function finalizeLoyaltyRedemptionAfterPrint(saleId) {
+  if (isAccountant()) return showToast('Accountant accounts have read-only access.', 'error');
+  const sale = state.posSales.find((entry) => entry.id === saleId);
+  if (!sale || sale.loyaltyRedemptionPrinted || Number(sale.loyaltyPointsRedeemed || 0) <= 0) return;
+  const customer = state.customers.find((entry) => phoneKey(entry.phone) === phoneKey(sale.customerPhone));
+  if (!customer) {
+    showToast('Could not find the loyalty customer to complete the point redemption.', 'error');
+    return;
+  }
+  customer.loyaltyPoints = Math.max(0, Number(customer.loyaltyPoints || 0) - Number(sale.loyaltyPointsRedeemed));
+  sale.loyaltyPointsBalanceAfter = customer.loyaltyPoints;
+  sale.loyaltyRedemptionPrinted = true;
+  pendingReceiptRedemptionSaleId = null;
+  $('receipt-close-button').classList.remove('hidden');
+  $('rc-loyalty').innerText = `${sale.loyaltyPointsEarned} earned • ${sale.loyaltyPointsRedeemed} redeemed • ${customer.loyaltyPoints} points remaining`;
+  $('rc-loyalty-giveaway').innerText = `${Number(sale.loyaltyFreeGiveawayKg * 1000).toLocaleString()} g Chicken — Loyalty Free Giveaway. Points redeemed after printing.`;
+  saveState();
+  showToast(`${sale.loyaltyPointsRedeemed} loyalty points redeemed after printing the receipt.`, 'success');
+}
+
+// ---------- MODULE 5 & 6: attendance, wall QR, payroll ----------
+function openWallQrModal() {
+  const checkInUrl = `${window.location.href.split('?')[0].split('#')[0]}?qr=wall-checkin`;
+  const qrImg = $('wall-qr-image');
+  qrImg.style.display = 'block';
+  $('wall-qr-fallback').classList.add('hidden');
+  qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=10&data=${encodeURIComponent(checkInUrl)}`;
+  $('wall-qr-modal').classList.remove('hidden');
+}
+function closeWallQrModal() { $('wall-qr-modal').classList.add('hidden'); }
+
+async function openMobileQrPortal() {
+  closeWallQrModal();
+  try {
+    qrRoster = await Api.roster();
+  } catch (err) {
+    return showToast(err.message, 'error');
+  }
+  $('mob-qr-staff-select').innerHTML = qrRoster.map((e) =>
+    `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)} (${e.clockedIn ? 'Currently Signed In' : 'Signed Out'})</option>`).join('');
+  $('mob-qr-live-time').innerText = `${getTodayDate()} • ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  $('mob-qr-pin-input').value = '';
+  updateMobileQrStaffStatus();
+  $('mobile-qr-modal').classList.remove('hidden');
+}
+
+function closeMobileQrPortal() {
+  $('mobile-qr-modal').classList.add('hidden');
+  if (!currentUser) openLoginModal();
+}
+
+function updateMobileQrStaffStatus() {
+  const staff = qrRoster.find((member) => member.id === Number($('mob-qr-staff-select').value));
+  if (!staff) return;
+  const statusEl = $('mob-qr-cur-status'), btnEl = $('mob-qr-submit-btn');
+  const base = 'w-full py-3.5 rounded-2xl font-black text-sm uppercase tracking-wider transition shadow-lg flex items-center justify-center gap-2';
+  if (staff.clockedIn) {
+    statusEl.className = 'text-emerald-400 font-black';
+    statusEl.innerText = `ON SHIFT (Signed in at ${staff.lastClockIn})`;
+    btnEl.className = `${base} bg-amber-500 hover:bg-amber-400 text-slate-950`;
+    btnEl.innerHTML = '<i class="fa-solid fa-right-from-bracket"></i> Scan Complete — Tap to Sign Out';
+  } else {
+    statusEl.className = 'text-slate-400 font-bold';
+    statusEl.innerText = 'Currently Signed Out';
+    btnEl.className = `${base} bg-emerald-500 hover:bg-emerald-400 text-slate-950`;
+    btnEl.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Scan Complete — Tap to Sign In';
+  }
+}
+
+async function submitMobileQrClock() {
+  const staffId = Number($('mob-qr-staff-select').value);
+  const pin = $('mob-qr-pin-input').value.trim();
+  if (!/^\d{4}$/.test(pin)) return showToast('Enter your 4-digit PIN.', 'error');
+  try {
+    const res = await Api.qrClock(staffId, pin);
+    showToast(res.message, res.action === 'IN' ? 'success' : 'info');
+    $('mobile-qr-modal').classList.add('hidden');
+    if (currentUser) { await flushNow(); await pullFromServer(); } else openLoginModal();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function openStaffProfileModal() {
+  $('staff-profile-modal').classList.remove('hidden');
+  $('staff-profile-current-phone').value = '';
+  $('staff-profile-current-password').value = '';
+  $('staff-profile-name').value = '';
+  $('staff-profile-phone').value = '';
+  $('staff-profile-new-password').value = '';
+  $('staff-profile-confirm-password').value = '';
+}
+
+function closeStaffProfileModal() {
+  $('staff-profile-modal').classList.add('hidden');
+}
+
+async function saveStaffProfile() {
+  const currentPhone = $('staff-profile-current-phone').value.trim();
+  const currentPassword = $('staff-profile-current-password').value;
+  const name = $('staff-profile-name').value.trim();
+  const phone = $('staff-profile-phone').value.trim();
+  const newPassword = $('staff-profile-new-password').value;
+  const confirmPassword = $('staff-profile-confirm-password').value;
+  if (!currentPhone || !currentPassword || !name || !phone) {
+    return showToast('Enter your current sign-in details, name, and phone number.', 'error');
+  }
+  if (newPassword !== confirmPassword) return showToast('New passwords do not match.', 'error');
+  if (newPassword && newPassword.length < 8) return showToast('New password must be at least 8 characters.', 'error');
+
+  const button = $('staff-profile-save');
+  button.disabled = true;
+  button.innerText = 'Saving…';
+  try {
+    const login = await Api.login(currentPhone, currentPassword);
+    await Api.updateStaffProfile({ name, phone, currentPassword, newPassword }, login.token);
+    closeStaffProfileModal();
+    showToast('Your staff details were updated.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.innerText = 'Save my details';
+  }
+}
+
+async function toggleClock(staffId) {
+  try {
+    const res = await Api.kioskClock(staffId);
+    showToast(res.message, res.action === 'IN' ? 'success' : 'info');
+    await flushNow();
+    await pullFromServer();
+  } catch (err) { showToast(err.message, 'error'); }
+}
+
+async function manualSignOut(staffId, button) {
+  button.disabled = true;
+  button.innerText = 'Signing Out…';
+  try {
+    const res = await Api.manualSignOut(staffId);
+    showToast(res.message, 'info');
+    await flushNow();
+    await pullFromServer();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.innerHTML = '<i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out';
+  }
+}
+
+function toggleManualLogForm() { $('manual-log-form').classList.toggle('hidden'); }
+
+function saveManualAttendance() {
+  const hours = Number($('man-hours').value);
+  const signIn = $('man-in').value.trim();
+  const signOut = $('man-out').value.trim();
+  if (!$('man-staff').value || !signIn || !signOut || !Number.isFinite(hours) || hours <= 0) {
+    return showToast('Select a staff member and enter sign-in, sign-out, and valid hours.', 'error');
+  }
+  state.attendanceLogs.unshift({
+    id: Date.now(), staffId: Number($('man-staff').value), date: $('man-date').value || getTodayDate(),
+    signIn, signOut,
+    hours, ot: Math.max(0, hours - 10)
+  });
+  $('manual-log-form').classList.add('hidden');
+  saveState();
+  showToast('Manual shift & overtime logged!', 'success');
+}
+
+function openAddStaffModal() { $('add-staff-modal').classList.toggle('hidden'); }
+
+function openEditStaffModal(staffId) {
+  if (currentUser?.role !== 'admin') return showToast('Only admins can edit staff details.', 'error');
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return showToast('Staff member not found.', 'error');
+  editingStaffId = staffId;
+  $('edit-staff-name').value = staff.name || '';
+  $('edit-staff-role').value = staff.role || '';
+  $('edit-staff-pin').value = staff.pin || '';
+  $('edit-staff-base-salary').value = Number(staff.baseSalary || 0);
+  $('edit-staff-ot-rate').value = Number(staff.otRate || 0);
+  $('edit-staff-allowance').value = Number(staff.allowance || 0);
+  $('edit-staff-advance').value = Number(staff.advance || 0);
+  $('edit-staff-modal').classList.remove('hidden');
+}
+
+function closeEditStaffModal() {
+  editingStaffId = null;
+  $('edit-staff-modal').classList.add('hidden');
+}
+
+async function saveStaffDetails() {
+  if (currentUser?.role !== 'admin' || editingStaffId === null) {
+    return showToast('Only admins can edit staff details.', 'error');
+  }
+  const staff = state.staff.find((member) => member.id === editingStaffId);
+  if (!staff) return showToast('Staff member not found.', 'error');
+  const payrollFields = ['edit-staff-base-salary', 'edit-staff-ot-rate', 'edit-staff-allowance', 'edit-staff-advance'];
+  if (payrollFields.some((id) => $(id).value.trim() === '')) {
+    return showToast('Enter values for all payroll fields.', 'error');
+  }
+  const updated = {
+    name: $('edit-staff-name').value.trim(),
+    role: $('edit-staff-role').value.trim(),
+    pin: $('edit-staff-pin').value.trim(),
+    baseSalary: Number($('edit-staff-base-salary').value),
+    otRate: Number($('edit-staff-ot-rate').value),
+    allowance: Number($('edit-staff-allowance').value),
+    advance: Number($('edit-staff-advance').value)
+  };
+  if (!updated.name || !updated.role || !/^\d{4}$/.test(updated.pin)
+    || Object.values(updated).some((value) => typeof value === 'number' && (!Number.isFinite(value) || value < 0))) {
+    return showToast('Enter a name, role, 4-digit PIN, and valid non-negative payroll amounts.', 'error');
+  }
+
+  const button = $('edit-staff-save');
+  button.disabled = true;
+  try {
+    const result = await Api.updateStaff(editingStaffId, updated);
+    Object.assign(staff, result.staff);
+    closeEditStaffModal();
+    renderAll();
+    showToast(`${staff.name}'s details and payroll settings were updated.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function archiveStaff(staffId) {
+  const staff = state.staff.find((entry) => entry.id === staffId);
+  if (!staff || !confirm(`Archive ${staff.name}? Their account will be disabled, but their attendance and payroll history will be kept.`)) return;
+  try {
+    const result = await Api.archiveStaff(staffId);
+    staff.archivedAt = result.staff.archivedAt;
+    renderAll();
+    showToast(`${staff.name} archived. Their reports remain available.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function restoreStaff(staffId) {
+  const staff = state.staff.find((entry) => entry.id === staffId);
+  if (!staff) return;
+  try {
+    await Api.restoreStaff(staffId);
+    delete staff.archivedAt;
+    renderAll();
+    showToast(`${staff.name} restored and can sign in again.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function createExistingStaffAccount() {
+  const staffId = Number($('existing-staff-account-select').value);
+  const phone = $('existing-staff-account-phone').value.trim();
+  const password = $('existing-staff-account-password').value;
+  if (!staffId || !phone || !password) return showToast('Select a staff member and enter their phone number and password.', 'error');
+  if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
+  try {
+    await Api.createStaffAccount(staffId, phone, password);
+    const staff = state.staff.find((entry) => entry.id === staffId);
+    if (staff) staff.phone = phone;
+    $('existing-staff-account-phone').value = '';
+    $('existing-staff-account-password').value = '';
+    saveState();
+    showToast('Staff login created. They can now sign in with their phone and password.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function saveNewStaff() {
+  const name = $('new-staff-name').value.trim();
+  const phone = $('new-staff-phone').value.trim();
+  const password = $('new-staff-password').value;
+  if (!name || !phone || !password) return showToast('Enter the staff member name, phone number, and password.', 'error');
+  if (password.length < 8) return showToast('Staff password must be at least 8 characters.', 'error');
+  const pin = String(Math.floor(1000 + Math.random() * 9000));
+  const staff = {
+    id: Date.now(), name, role: $('new-staff-role').value, pin,
+    phone,
+    baseSalary: Number($('new-staff-base').value) || 48000, otRate: Number($('new-staff-otrate').value) || 350,
+    allowance: Number($('new-staff-allowance').value) || 6000, advance: 0, clockedIn: false, lastClockIn: null
+  };
+  try {
+    await Api.createStaff(staff, phone, password);
+    state.staff.push(staff);
+    ['new-staff-name', 'new-staff-phone', 'new-staff-password', 'new-staff-base', 'new-staff-otrate', 'new-staff-allowance']
+      .forEach((id) => { $(id).value = ''; });
+    $('add-staff-modal').classList.add('hidden');
+    saveState();
+    showToast(`${name} added. Staff can sign in with their phone and password; QR attendance PIN: ${pin}.`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function updatePayrollField(staffId, field, value) {
+  if (currentUser?.role !== 'admin') return showToast('Only admins can edit payroll settings.', 'error');
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    renderAll();
+    return showToast('Enter a valid non-negative amount.', 'error');
+  }
+  staff[field] = amount;
+  saveState();
+  showToast(`Updated ${staff.name}'s ${field}`, 'info');
+}
+
+// Payroll uses the current calendar month's attendance only
+const monthLogs = (staffId) => {
+  const prefix = getTodayDate().slice(0, 7);
+  return state.attendanceLogs.filter((log) => log.staffId === staffId && String(log.date).startsWith(prefix));
+};
+const payrollOf = (staff) => {
+  const logs = monthLogs(staff.id);
+  const totalOt = logs.reduce((s, l) => s + Number(l.ot || 0), 0);
+  const otPay = Math.round(totalOt * staff.otRate);
+  return { logs, totalOt, otPay, netPay: staff.baseSalary + otPay + staff.allowance - staff.advance };
+};
+
+function openPayslipModal(staffId) {
+  const staff = state.staff.find((member) => member.id === staffId);
+  if (!staff) return;
+  const p = payrollOf(staff);
+  $('ps-month').innerText = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  $('ps-name').innerText = staff.name;
+  $('ps-role').innerText = staff.role;
+  $('ps-shifts').innerText = `${p.logs.length} Shifts`;
+  $('ps-ot-hours').innerText = `${p.totalOt.toFixed(1)} hrs`;
+  $('ps-base').innerText = `Rs. ${staff.baseSalary.toLocaleString()}`;
+  $('ps-ot-rate').innerText = `(${p.totalOt.toFixed(1)} hrs × Rs. ${staff.otRate})`;
+  $('ps-ot-pay').innerText = `+ Rs. ${p.otPay.toLocaleString()}`;
+  $('ps-allowance').innerText = `+ Rs. ${staff.allowance.toLocaleString()}`;
+  $('ps-advance').innerText = `- Rs. ${staff.advance.toLocaleString()}`;
+  $('ps-net').innerText = `Rs. ${p.netPay.toLocaleString()}`;
+  $('ps-date').innerText = `Date: ${getTodayDate()}`;
+  $('payslip-modal').classList.remove('hidden');
+}
+function closePayslipModal() { $('payslip-modal').classList.add('hidden'); }
+
+function printSection(elementId) {
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area'].forEach((id) => $(id).classList.remove('printable-active'));
+  const printArea = $(elementId);
+  printArea.classList.add('printable-active');
+  if (elementId === 'receipt-print-area') {
+    activeReceiptPrintSaleId = pendingReceiptRedemptionSaleId;
+    receiptPrintOriginalStyle = printArea.getAttribute('style');
+    printArea.style.cssText = 'position:absolute;left:0;top:0;box-sizing:border-box;width:80mm;max-width:none;padding:3mm;overflow:visible;font:10px/1.35 monospace;';
+    const heightMm = Math.ceil(printArea.getBoundingClientRect().height * 25.4 / 96 + 5);
+    if (receiptPrintOriginalStyle === null) printArea.removeAttribute('style');
+    else printArea.setAttribute('style', receiptPrintOriginalStyle);
+    receiptPrintStyle = document.createElement('style');
+    receiptPrintStyle.media = 'print';
+    receiptPrintStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+    document.head.appendChild(receiptPrintStyle);
+  }
+  window.print();
+}
+
+window.addEventListener('afterprint', () => {
+  ['receipt-print-area', 'payslip-print-area', 'annual-print-area', 'wall-qr-print-area', 'pos-income-summary', 'pos-summary-print-area', 'inventory-stock-additions-print-area']
+    .forEach((id) => $(id).classList.remove('printable-active'));
+  if (receiptPrintStyle) {
+    receiptPrintStyle.remove();
+    receiptPrintStyle = null;
+    if (receiptPrintOriginalStyle === null) $('receipt-print-area').removeAttribute('style');
+    else $('receipt-print-area').setAttribute('style', receiptPrintOriginalStyle);
+    receiptPrintOriginalStyle = null;
+  }
+  if (activeReceiptPrintSaleId) {
+    const saleId = activeReceiptPrintSaleId;
+    activeReceiptPrintSaleId = null;
+    finalizeLoyaltyRedemptionAfterPrint(saleId);
+  }
+});
+
+// ---------- MODULE 7: deliveries & subscriptions ----------
+function setDeliveryDateInputDefaults() {
+  const today = getTodayDate();
+  ['del-date', 'sub-push-date'].forEach((id) => {
+    const input = $(id);
+    input.min = today;
+    if (!input.value || input.value < today) input.value = today;
+  });
+}
+
+function getSelectedDeliveryDate(inputId) {
+  const input = $(inputId);
+  const today = getTodayDate();
+  input.min = today;
+  const date = input.value;
+  const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
+  if (!parsedDate || Number.isNaN(parsedDate.getTime()) || date < today || parsedDate.toISOString().slice(0, 10) !== date) {
+    showToast('Choose today or a future delivery date.', 'error');
+    return null;
+  }
+  return date;
+}
+
+function addDelivery() {
+  const customer = $('del-customer').value.trim();
+  const items = $('del-items').value.trim();
+  if (!customer || !items) return showToast('Please enter customer and meat order details.', 'error');
+  const date = getSelectedDeliveryDate('del-date');
+  if (!date) return;
+  const riders = state.staff.filter((member) => /rider/i.test(member.role));
+  state.deliveries.unshift({
+    id: Date.now(), customer, phone: $('del-phone').value.trim(), area: $('del-area').value.trim(),
+    items, date, slot: $('del-slot').value,
+    rider: (riders[0] || state.staff[0] || { name: '-' }).name,
+    status: 'Scheduled'
+  });
+  ['del-customer', 'del-phone', 'del-area', 'del-items'].forEach((id) => { $(id).value = ''; });
+  saveState();
+  showToast(`Scheduled delivery for ${customer} on ${date}.`, 'success');
+}
+
+function updateDeliveryStatus(id, status) {
+  const d = state.deliveries.find((x) => x.id === id);
+  if (d) { d.status = status; saveState(); showToast(`Delivery status updated to "${status}"`, 'info'); }
+}
+function updateDeliveryRider(id, rider) {
+  const d = state.deliveries.find((x) => x.id === id);
+  if (d) { d.rider = rider; saveState(); showToast(`Assigned ${rider} to delivery.`, 'info'); }
+}
+
+function sendWhatsAppUpdate(id) {
+  const d = state.deliveries.find((x) => x.id === id);
+  if (!d) return;
+  const phone = (d.phone || '').replace(/\D/g, '').replace(/^0/, '94');
+  const msg = `Assalamu Alaikum ${d.customer}, your Raihan Farm Shop fresh meat order (${d.items}) for ${d.date} [${d.slot}] is currently "${d.status}". Rider: ${d.rider}. Thank you!`;
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  showToast(`WhatsApp alert opened for ${d.customer}`, 'success');
+}
+
+function addSubscription() {
+  const customer = $('sub-customer').value.trim();
+  const pack = $('sub-pack').value.trim();
+  const price = Number($('sub-price').value);
+  if (!customer || !pack || $('sub-price').value === '' || !Number.isFinite(price) || price < 0) {
+    return showToast('Enter subscriber name, pack details, and a valid monthly price.', 'error');
+  }
+  state.subscriptions.push({
+    id: Date.now(), customer, phone: $('sub-phone').value.trim(), area: $('sub-area').value.trim(),
+    pack, day: $('sub-day').value, price, status: 'Active'
+  });
+  ['sub-customer', 'sub-phone', 'sub-area', 'sub-pack', 'sub-price'].forEach((id) => { $(id).value = ''; });
+  saveState();
+  showToast(`Weekly subscription registered for ${customer}!`, 'success');
+}
+
+function pushSubToSelectedDate(subId) {
+  const sub = state.subscriptions.find((s) => s.id === subId);
+  if (!sub) return;
+  const date = getSelectedDeliveryDate('sub-push-date');
+  if (!date) return;
+  const riders = state.staff.filter((member) => /rider/i.test(member.role));
+  state.deliveries.unshift({
+    id: Date.now(), customer: `${sub.customer} (Weekly Sub)`, phone: sub.phone, area: sub.area, items: sub.pack,
+    date, slot: 'Morning (07:00 AM - 10:00 AM)',
+    rider: (riders[0] || state.staff[0] || { name: '-' }).name,
+    status: 'Scheduled'
+  });
+  saveState();
+  showToast(`${sub.customer}'s weekly box added to dispatch for ${date}.`, 'success');
+}
+
+function ensureCoaState() {
+  if (!state) return;
+  if (!Array.isArray(state.coa)) {
+    state.coa = [
+      { code: '1010', name: 'Cash Register', type: 'Asset' },
+      { code: '1020', name: 'Bank Account', type: 'Asset' },
+      { code: '1030', name: 'Dressed Inventory Stock', type: 'Asset' },
+      { code: '5010', name: 'Farm Purchases', type: 'Expense' },
+      { code: '5040', name: 'Staff Salaries & Overtime', type: 'Expense' }
+    ];
+  }
+  if (!Array.isArray(state.coaLedger)) state.coaLedger = [];
+}
+
+function renderCOA() {
+  if (!state) return;
+  ensureCoaState();
+
+  const summaryList = $('coa-summary-list');
+  const ledgerBody = $('coa-ledger-tbody');
+  if (!summaryList || !ledgerBody) return;
+
+  summaryList.innerHTML = state.coa.map((acct) => {
+    const total = state.coaLedger
+      .filter((entry) => String(entry.accountCode || entry.code || '') === String(acct.code))
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    return `
+      <div class="flex justify-between items-center bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2.5">
+        <div>
+          <p class="font-black text-white">${esc(acct.code)}</p>
+          <p class="text-[11px] text-slate-400">${esc(acct.name)}</p>
+        </div>
+        <span class="text-xs font-extrabold ${acct.type === 'Expense' ? 'text-amber-400' : 'text-emerald-400'}">Rs. ${total.toLocaleString()}</span>
+      </div>`;
+  }).join('') || '<p class="text-xs text-slate-500">No accounts configured yet.</p>';
+
+  ledgerBody.innerHTML = state.coaLedger.length === 0
+    ? '<tr><td colspan="4" class="py-5 text-center text-slate-500">No expense vouchers recorded yet.</td></tr>'
+    : state.coaLedger.map((entry) => {
+      const account = state.coa.find((acct) => String(acct.code) === String(entry.accountCode || entry.code));
+      const name = account ? `${account.code} • ${account.name}` : `${entry.accountCode || entry.code || '—'}`;
+      return `
+        <tr>
+          <td class="py-2.5 px-3 text-slate-300">${esc(entry.date || getTodayDate())}</td>
+          <td class="py-2.5 px-3 font-bold text-white">${esc(name)}</td>
+          <td class="py-2.5 px-3 text-slate-300">${esc(entry.description || 'Expense voucher')}</td>
+          <td class="py-2.5 px-3 text-right font-black text-amber-400">Rs. ${Number(entry.amount || 0).toLocaleString()}</td>
+        </tr>`;
+    }).join('');
+}
+
+function openExpenseModal() {
+  ensureCoaState();
+  const select = $('expense-account');
+  if (!select) return;
+  select.innerHTML = state.coa.map((acct) => `<option value="${esc(acct.code)}">${esc(acct.code)} • ${esc(acct.name)}</option>`).join('');
+  const dateInput = $('expense-date');
+  if (dateInput && !dateInput.value) dateInput.value = getTodayDate();
+  $('expense-voucher-modal').classList.remove('hidden');
+}
+
+function saveExpenseVoucher() {
+  if (!state) return;
+  ensureCoaState();
+  const accountCode = $('expense-account').value;
+  const amount = Number($('expense-amount').value || 0);
+  const description = $('expense-description').value.trim();
+  const date = $('expense-date').value || getTodayDate();
+
+  if (!accountCode || !Number.isFinite(amount) || amount <= 0 || !description) {
+    showToast('Select an account, add a valid amount and description before saving.', 'error');
+    return;
+  }
+
+  if (!state.coaLedger) state.coaLedger = [];
+  state.coaLedger.unshift({
+    accountCode,
+    description,
+    amount,
+    date,
+    createdAt: new Date().toISOString()
+  });
+
+  $('expense-voucher-modal').classList.add('hidden');
+  $('expense-description').value = '';
+  $('expense-amount').value = '';
+  saveState();
+  showToast('Expense voucher added to the chart of accounts.', 'success');
+}
+
+// ---------- RENDERING ----------
+function renderPosProducts() {
+  const query = ($('pos-product-search')?.value || '').trim().toLocaleLowerCase();
+  const salesFrequency = new Map();
+  (state.posSales || []).forEach((sale) => {
+    const itemIds = new Set();
+    if (Array.isArray(sale.itemsDetails) && sale.itemsDetails.length) {
+      sale.itemsDetails.forEach((detail) => {
+        if (!detail.isLoyaltyFreeGiveaway && Number(detail.quantity) > 0 && detail.id !== undefined) {
+          itemIds.add(String(detail.id));
+        }
+      });
+    } else {
+      Object.entries(sale.itemsBreakdown || {}).forEach(([id, quantity]) => {
+        if (Number(quantity) > 0) itemIds.add(String(id));
+      });
+    }
+    itemIds.forEach((id) => salesFrequency.set(id, (salesFrequency.get(id) || 0) + 1));
+  });
+  const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query));
+  items.sort((a, b) => (salesFrequency.get(String(b.id)) || 0) - (salesFrequency.get(String(a.id)) || 0)
+    || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const visibleItems = showAllPosProducts ? items : items.slice(0, 6);
+  $('pos-product-grid').innerHTML = state.inventory.length === 0
+    ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No inventory items yet. Add products before creating a sale.</div>'
+    : items.length === 0
+      ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No products start with that search text.</div>'
+      : visibleItems.map((item) => {
+    const sel = item.id === selectedPosCategoryId, low = inventoryStock(item) <= inventoryMinStock(item);
+    return `
+      <button type="button" onclick="selectPosProduct('${esc(item.id)}')" class="text-left cursor-pointer p-4 rounded-xl border transition flex flex-col justify-between ${sel ? 'bg-yellow-400/15 border-yellow-400 shadow-lg shadow-yellow-400/10' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'}">
+        <div class="flex justify-between items-start gap-2">
+          <div><span class="text-[10px] uppercase font-bold text-yellow-400">${esc(item.source)}</span><h4 class="font-extrabold text-sm text-white mt-0.5">${esc(item.name)}</h4></div>
+          <span class="px-2 py-0.5 rounded text-[11px] font-bold ${low ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}">${inventoryStockText(item, inventoryUnit(item) === 'kg' ? 1 : 0)} left</span>
+        </div>
+        <div class="mt-3 pt-2 border-t border-slate-800/80 flex justify-between items-center"><span class="text-xs text-slate-400">Retail Rate:</span><span class="text-sm font-black text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()} ${inventoryPriceLabel(item)}</span></div>
+      </button>`;
+  }).join('');
+  const toggleButton = $('pos-products-toggle');
+  toggleButton.classList.toggle('hidden', items.length <= 6);
+  toggleButton.setAttribute('aria-expanded', String(showAllPosProducts));
+  toggleButton.innerText = showAllPosProducts
+    ? 'Show fewer products'
+    : `Show more products (${items.length - 6} more)`;
+}
+
+function searchPosProducts() {
+  showAllPosProducts = false;
+  renderPosProducts();
+}
+
+function togglePosProductList() {
+  showAllPosProducts = !showAllPosProducts;
+  renderPosProducts();
+}
+
+function renderInventoryCards() {
+  if (!state) return;
+  const additionsDateInput = $('inv-stock-additions-date');
+  if (additionsDateInput && !additionsDateInput.value) additionsDateInput.value = getTodayDate();
+  const uniqueNames = [...new Set(state.inventory.map((item) => String(item.name || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const uniqueSuppliers = [...new Set(state.inventory.map((item) => String(item.source || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  $('inventory-item-name-options').innerHTML = uniqueNames
+    .map((name) => `<option value="${esc(name)}"></option>`).join('');
+  $('inventory-supplier-options').innerHTML = uniqueSuppliers
+    .map((supplier) => `<option value="${esc(supplier)}"></option>`).join('');
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const isStaff = currentUser?.role === 'staff';
+  const query = ($('inventory-search')?.value || '').trim().toLocaleLowerCase();
+  const items = state.inventory.filter((item) => !query || item.name.toLocaleLowerCase().startsWith(query))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const adjustmentItemSelect = $('inv-adjustment-item');
+  if (adjustmentItemSelect) {
+    const selectedItemId = adjustmentItemSelect.value;
+    const meatItems = state.inventory.filter((item) => inventoryUnit(item) === 'kg');
+    adjustmentItemSelect.innerHTML = meatItems.length
+      ? meatItems.map((item) => `<option value="${esc(item.id)}">${esc(item.name)} (${inventoryStockText(item, 2)} available)</option>`).join('')
+      : '<option value="">No kg-based meat inventory</option>';
+    if (meatItems.some((item) => String(item.id) === selectedItemId)) adjustmentItemSelect.value = selectedItemId;
+  }
+  $('inventory-cards-container').innerHTML = state.inventory.length === 0
+    ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items have been added yet.</div>'
+    : items.length === 0
+      ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items start with that search text.</div>'
+      : items.map((item) => {
+    const unit = inventoryUnit(item), priceLabel = inventoryPriceLabel(item);
+    const stockStep = unit === 'kg' ? '0.1' : '1';
+        const priceAndStockControls = isAdmin
+          ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
+          : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
+              ${isStaff ? `<div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>` : ''}`;
+        return `
+      <div class="card p-5 flex flex-col justify-between space-y-4 border border-slate-800">
+        <div class="flex justify-between items-start gap-2">
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs font-bold uppercase text-yellow-400">${esc(item.source)}</span>
+              <span class="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold text-slate-300">${esc(inventoryUnitLabel(item))}</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isAdmin ? 'bg-yellow-400/20 text-yellow-300' : isStaff ? 'bg-emerald-500/20 text-emerald-300' : 'bg-violet-500/20 text-violet-300'}">${isAdmin ? 'Admin: Inventory Editing' : isStaff ? 'Staff: Stock Additions Only' : 'Accountant: View Only'}</span>
+            </div>
+            <h3 class="text-lg font-black text-white mt-1">${esc(item.name)}</h3>
+          </div>
+          <div class="text-right"><span class="text-xs text-slate-400 block">Available Stock</span><span class="text-2xl font-black text-emerald-400">${inventoryStockText(item, unit === 'kg' ? 2 : 0)}</span></div>
+        </div>
+        ${isAdmin ? `
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
+          <div><label class="block text-xs text-slate-400 mb-1">Item Name</label><input type="text" id="inv-name-${esc(item.id)}" list="inventory-item-name-options" value="${esc(item.name)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          <div><label class="block text-xs text-slate-400 mb-1">Farm / Supplier Source</label><input type="text" id="inv-source-${esc(item.id)}" list="inventory-supplier-options" value="${esc(item.source)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+          <div class="sm:col-span-2"><label class="block text-xs text-slate-400 mb-1">Wholesale Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-wholesale-${esc(item.id)}" value="${Number(item.wholesalePrice || 0)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
+        </div>` : ''}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-800">
+          ${priceAndStockControls}
+        </div>
+        ${isAdmin || isStaff ? `<div class="flex justify-end">
+          <button onclick="submitInventoryEdit('${esc(item.id)}')" class="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition bg-yellow-400 hover:bg-yellow-300 text-slate-950">
+            <i class="fa-solid ${isAdmin ? 'fa-floppy-disk' : 'fa-plus'} mr-1"></i> ${isAdmin ? 'Save Inventory Update' : 'Add Stock'}
+          </button>
+        </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function renderInventoryStockAdditions() {
+  const tbody = $('inv-stock-additions-tbody');
+  if (!tbody) return;
+  const printButton = $('inv-stock-additions-print-button');
+  const loaded = Array.isArray(inventoryStockAdditions);
+  if (printButton) printButton.disabled = !loaded;
+  if (!loaded) return;
+
+  const totals = inventoryStockAdditions.reduce((result, addition) => {
+    const unit = addition.unitLabel || 'unit';
+    result[unit] = (result[unit] || 0) + Number(addition.quantity || 0);
+    return result;
+  }, {});
+  $('inv-stock-additions-heading').innerText = `Inventory Stock Additions — ${inventoryStockAdditionsDate}`;
+  $('inv-stock-additions-totals').innerText = inventoryStockAdditions.length
+    ? `${inventoryStockAdditions.length} addition${inventoryStockAdditions.length === 1 ? '' : 's'} · Total added: ${Object.entries(totals)
+      .map(([unit, quantity]) => `${quantity.toFixed(unit === 'kg' ? 2 : 0)} ${unit}`).join(' · ')}`
+    : 'No stock additions were recorded for this day.';
+  tbody.innerHTML = inventoryStockAdditions.length
+    ? inventoryStockAdditions.map((addition) => `
+      <tr class="border-b border-slate-800">
+        <td class="py-2 px-3">${esc(addition.time || '—')}</td>
+        <td class="py-2 px-3 font-bold">${esc(addition.itemName || '—')}</td>
+        <td class="py-2 px-3">${esc(addition.addedBy || '—')}</td>
+        <td class="py-2 px-3 text-right font-bold">${Number(addition.quantity).toFixed(addition.unitLabel === 'kg' ? 2 : 0)}</td>
+        <td class="py-2 px-3">${esc(addition.unitLabel || 'unit')}</td>
+        <td class="py-2 px-3">${esc(addition.source || '—')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="py-4 text-center text-slate-500">No stock additions recorded for this day.</td></tr>';
+}
+
+function resetInventoryStockAdditionsSummary() {
+  inventoryStockAdditionsRequestId += 1;
+  inventoryStockAdditions = null;
+  inventoryStockAdditionsDate = '';
+  $('inv-stock-additions-heading').innerText = 'Select the day and view the summary.';
+  $('inv-stock-additions-totals').innerText = '';
+  $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-slate-500">Choose a day to load stock additions.</td></tr>';
+  renderInventoryStockAdditions();
+}
+
+async function loadInventoryStockAdditions() {
+  const date = $('inv-stock-additions-date').value;
+  if (!date) return showToast('Choose a day for the inventory summary.', 'error');
+  const requestId = ++inventoryStockAdditionsRequestId;
+  $('inv-stock-additions-heading').innerText = 'Loading inventory stock additions…';
+  $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-slate-500">Loading…</td></tr>';
+  inventoryStockAdditions = null;
+  renderInventoryStockAdditions();
+  try {
+    const result = await Api.getInventoryStockAdditions(date);
+    if (requestId !== inventoryStockAdditionsRequestId) return;
+    inventoryStockAdditions = result.additions;
+    inventoryStockAdditionsDate = result.date;
+    renderInventoryStockAdditions();
+  } catch (err) {
+    if (requestId !== inventoryStockAdditionsRequestId) return;
+    $('inv-stock-additions-heading').innerText = 'Unable to load inventory stock additions.';
+    $('inv-stock-additions-tbody').innerHTML = '<tr><td colspan="6" class="py-4 text-center text-red-300">The summary could not be loaded. Please try again.</td></tr>';
+    showToast(err.message, 'error');
+  }
+}
+
+function printInventoryStockAdditions() {
+  if (!Array.isArray(inventoryStockAdditions) || inventoryStockAdditionsDate !== $('inv-stock-additions-date').value) {
+    return showToast('Load a day’s inventory summary before printing.', 'error');
+  }
+  printSection('inventory-stock-additions-print-area');
+}
+
+function renderSlaughterProducts() {
+  const rows = $('slaughter-output-rows');
+  if (!rows.children.length) addSlaughterOutputRow('slaughter-output-rows');
+  const meatItems = state.inventory.filter((item) => inventoryUnit(item) === 'kg');
+  document.querySelectorAll('#slaughter-output-rows [data-output-category], #edit-slaughter-output-rows [data-output-category]')
+    .forEach((select) => {
+      const selectedValue = select.value;
+      select.innerHTML = meatItems.length
+        ? meatItems.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('')
+        : '<option value="">Add kg-based meat inventory first</option>';
+      if (meatItems.some((item) => String(item.id) === selectedValue)) select.value = selectedValue;
+    });
+  const intakeSelect = $('sl-intake-id');
+  const selectedIntakeId = intakeSelect.value;
+  const pendingIntakes = getPendingFarmIntakes();
+  intakeSelect.innerHTML = pendingIntakes.length
+    ? pendingIntakes.map((intake) => `<option value="${esc(intake.id)}">${esc(intake.date)} — ${esc(intake.animalType)} — ${Number(intake.count)} animals, ${Number(intake.liveKg).toFixed(2)} kg</option>`).join('')
+    : '<option value="">No pending intakes — save a morning intake first</option>';
+  if (pendingIntakes.some((intake) => String(intake.id) === selectedIntakeId)) {
+    intakeSelect.value = selectedIntakeId;
+  } else if (pendingIntakes.length) {
+    intakeSelect.value = String(pendingIntakes[0].id);
+  }
+  calculateSlaughterPreview();
+}
+
+function renderAll() {
+  if (!state) return;
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const activeStaff = state.staff.filter((member) => !member.archivedAt);
+  const archivedStaff = state.staff.filter((member) => member.archivedAt);
+  const manDate = $('man-date');
+  if (manDate && !manDate.value) manDate.value = getTodayDate();
+
+  // KPIs
+  const todays = todaysPosSales();
+  const meatInventory = state.inventory.filter((item) => inventoryUnit(item) === 'kg');
+  $('kpi-stock').innerText = meatInventory.length
+    ? `${meatInventory.reduce((s, i) => s + Number(i.stockKg || 0), 0).toFixed(1)} kg`
+    : '—';
+  $('kpi-pos-sales').innerText = todays.length
+    ? `Rs. ${todays.reduce((s, p) => s + Number(p.totalRs || 0), 0).toLocaleString()}`
+    : '—';
+  $('kpi-pos-count').innerText = todays.length ? `${todays.length} counter bills today` : 'No sales recorded today';
+  const avgWaste = state.slaughterBatches.length
+    ? state.slaughterBatches.reduce((s, b) => s + Number(b.wastePct || 0), 0) / state.slaughterBatches.length
+    : null;
+  $('kpi-waste-pct').innerText = avgWaste === null ? '—' : `${avgWaste.toFixed(1)}%`;
+  $('kpi-waste-sub').innerText = state.slaughterBatches.length
+    ? `${state.slaughterBatches.length} farm batches processed`
+    : 'No slaughter batches recorded';
+  $('kpi-staff').innerText = activeStaff.length
+    ? `${activeStaff.filter((member) => member.clockedIn).length} / ${activeStaff.length}`
+    : '—';
+  let totalPayroll = 0, totalShopOt = 0;
+  activeStaff.forEach((member) => { const p = payrollOf(member); totalShopOt += p.totalOt; totalPayroll += p.netPay; });
+  $('kpi-payroll-mini').innerText = activeStaff.length ? `Month Payroll: Rs. ${totalPayroll.toLocaleString()}` : 'No payroll records';
+  $('dash-ot-summary').innerText = state.attendanceLogs.length ? `Total OT: ${totalShopOt.toFixed(1)} hrs` : '';
+  $('kpi-deliveries').innerText = state.deliveries.length ? `${state.deliveries.length} Orders` : '—';
+  $('kpi-subs-mini').innerText = state.subscriptions.length ? `${state.subscriptions.length} weekly box subscribers` : 'No subscriptions recorded';
+
+  // Dashboard strips
+  $('dash-inventory-grid').innerHTML = state.inventory.length === 0
+    ? '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No stock has been recorded yet.</div>'
+    : state.inventory.map((item) => {
+    const low = inventoryStock(item) <= inventoryMinStock(item);
+    return `
+      <div class="p-3.5 rounded-xl bg-slate-900/90 border ${low ? 'border-red-500/50' : 'border-slate-800'} flex flex-col justify-between">
+        <div class="flex justify-between items-start"><span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-yellow-400/15 text-yellow-400">${esc(item.source)}</span><span class="text-xs font-bold ${low ? 'text-red-400' : 'text-emerald-400'}">${low ? 'Low Stock' : 'In Chiller'}</span></div>
+        <h4 class="font-bold text-sm text-white mt-2">${esc(item.name)}</h4>
+        <div class="mt-2 pt-2 border-t border-slate-800 flex justify-between items-baseline"><span class="text-xl font-black text-yellow-400">${inventoryStockText(item, inventoryUnit(item) === 'kg' ? 1 : 0)}</span></div>
+      </div>`;
+  }).join('');
+
+  $('dash-slaughter-list').innerHTML = state.slaughterBatches.length === 0
+    ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No slaughter batches recorded yet.</div>'
+    : state.slaughterBatches.slice(0, 3).map((b) => `
+    <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-xs flex justify-between items-center">
+      <div><p class="font-bold text-white">${esc(b.slaughterAnimalType || b.animalType || 'Animal')} • ${Number(b.slaughterCount ?? b.count)} slaughtered → ${batchOutputs(b).map((output) => esc(output.categoryName)).join(', ')}</p><p class="text-slate-400">${esc(b.animalType || 'Animal')} intake: ${b.count} received • ${Number(b.deadBeforeSlaughterCount || 0)} dead • ${getBatchRemainingCount(b)} remaining</p><p class="text-slate-400">Estimated slaughter live: ${getBatchSlaughterLiveKg(b).toFixed(2)}kg &rarr; <strong class="text-emerald-400">Dressed: ${Number(b.actualKg || 0).toFixed(2)}kg</strong></p></div>
+      <span class="px-2 py-1 rounded-lg font-bold ${b.wastePct <= 31 ? 'bg-yellow-400/15 text-yellow-400' : 'bg-red-500/20 text-red-400'}">${b.wastePct}% Waste</span>
+    </div>`).join('');
+
+  $('dash-attendance-list').innerHTML = activeStaff.length === 0
+    ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No staff records yet.</div>'
+    : activeStaff.slice(0, 4).map((e) => `
+    <div class="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+      <div><p class="font-bold text-white">${esc(e.name)}</p><p class="text-slate-400 text-[11px]">${esc(e.role)}</p></div>
+      <span class="px-2.5 py-1 rounded-full font-bold ${e.clockedIn ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}">${e.clockedIn ? 'In (' + esc(e.lastClockIn) + ')' : 'Signed Out'}</span>
+    </div>`).join('');
+
+  $('dash-delivery-list').innerHTML = state.deliveries.length === 0
+    ? '<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">No delivery records yet.</div>'
+    : state.deliveries.slice(0, 3).map((d) => `
+    <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-xs flex justify-between items-center gap-2">
+      <div><p class="font-bold text-yellow-400">${esc(d.items)}</p><p class="text-slate-400">${esc(d.customer)} • ${esc(d.area)}</p></div>
+      <span class="px-2 py-1 rounded bg-slate-800 text-slate-300 font-semibold shrink-0">${esc(d.status)}</span>
+    </div>`).join('');
+
+  const slaughteredIntakeIds = new Set((state.slaughterBatches || []).map((batch) => String(batch.intakeId || '')));
+  $('farm-intake-tbody').innerHTML = (state.farmIntakes || []).length === 0
+    ? '<tr><td colspan="5" class="py-6 text-center text-sm text-slate-400">No morning intakes recorded yet.</td></tr>'
+    : state.farmIntakes.map((intake) => {
+      const reconciled = slaughteredIntakeIds.has(String(intake.id));
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="py-3 px-3"><div class="font-bold text-sky-300">${esc(intake.id)}</div><div class="text-xs text-slate-400">${esc(intake.date)}</div></td>
+          <td class="py-3 px-3 font-semibold">${esc(intake.animalType)}</td>
+          <td class="py-3 px-3 font-bold">${Number(intake.count)} Head</td>
+          <td class="py-3 px-3 font-semibold">${Number(intake.liveKg).toFixed(2)} kg</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold ${reconciled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'}">${reconciled ? 'Slaughter recorded' : 'Awaiting evening entry'}</span></td>
+        </tr>`;
+    }).join('');
+
+  // Slaughter table
+  $('slaughter-tbody').innerHTML = state.slaughterBatches.length === 0
+    ? `<tr><td colspan="${isAdmin ? 14 : 13}" class="py-6 text-center text-sm text-slate-400">No slaughter records yet.</td></tr>`
+    : state.slaughterBatches.map((b) => {
+    const optimal = b.wastePct <= 31;
+    const outputs = batchOutputs(b);
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(b.id)}</div><div class="text-xs text-slate-400">${esc(b.date)}</div><div class="text-xs text-sky-300">Morning intake: ${esc(b.intakeId || 'Legacy record')}</div></td>
+        <td class="py-3 px-3"><div class="font-bold text-white">${outputs.map((output) => `${esc(output.categoryName)} <span class="text-emerald-300">+${Number(output.actualKg || 0).toFixed(2)} kg</span>`).join('<br>')}</div><div class="text-xs text-slate-400">${esc(b.source)}</div><div class="text-xs text-sky-300">Intake: ${esc(b.animalType || '—')}</div></td>
+        <td class="py-3 px-3 font-bold">${b.count} Head</td>
+        <td class="py-3 px-3 font-semibold">${Number(b.liveKg).toFixed(1)} kg</td>
+        <td class="py-3 px-3 font-bold text-red-300">${Number(b.deadBeforeSlaughterCount || 0)} Head</td>
+        <td class="py-3 px-3 font-bold">${esc(b.slaughterAnimalType || b.animalType || '—')}</td>
+        <td class="py-3 px-3 font-bold">${Number(b.slaughterCount ?? b.count)} Head</td>
+        <td class="py-3 px-3 font-semibold">${getBatchRemainingCount(b)} Head</td>
+        <td class="py-3 px-3 font-semibold">${getBatchSlaughterLiveKg(b).toFixed(1)} kg</td>
+        <td class="py-3 px-3 text-slate-400">${Number(b.expectedKg).toFixed(1)} kg</td>
+        <td class="py-3 px-3 font-black text-emerald-400">+${Number(b.actualKg || 0).toFixed(2)} kg</td>
+        <td class="py-3 px-3"><span class="font-bold text-red-400">${Number(b.wasteKg).toFixed(1)} kg</span><span class="text-xs text-slate-400 block">(${Number(b.wastePct).toFixed(1)}% waste)</span></td>
+        <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full text-xs font-bold ${optimal ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}">${optimal ? 'Optimal Yield (~30%)' : 'High Waste Alert'}</span></td>
+        ${isAdmin ? `<td class="py-3 px-3"><button onclick="openSlaughterEdit('${esc(b.id)}')" class="bg-slate-800 hover:bg-yellow-400 hover:text-slate-950 text-yellow-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen-to-square mr-1"></i>Edit</button></td>` : ''}
+      </tr>`;
+  }).join('');
+
+  const lowStockCount = state.inventory.filter((item) => inventoryStock(item) <= inventoryMinStock(item)).length;
+  const lowStockBadge = $('nav-low-stock-badge');
+  if (lowStockCount > 0 && isAdmin) {
+    lowStockBadge.classList.remove('hidden');
+    lowStockBadge.innerText = lowStockCount;
+    lowStockBadge.setAttribute('aria-label', `${lowStockCount} low-stock alerts`);
+  } else {
+    lowStockBadge.classList.add('hidden');
+    lowStockBadge.removeAttribute('aria-label');
+  }
+
+  renderAnnualAnalytics();
+  renderCOA();
+
+  renderInventoryCards();
+  renderInventoryAdjustmentHistory();
+
+  // POS
+  if (!state.inventory.some((item) => item.id === selectedPosCategoryId)) selectedPosCategoryId = null;
+  renderPosProducts();
+  renderSlaughterProducts();
+  updatePosLinePreview();
+  renderPosCart();
+  renderPosSalesHistory();
+
+  // Attendance kiosk
+  $('kiosk-cards').innerHTML = activeStaff.length ? activeStaff.map((e) => {
+    const shifts = monthLogs(e.id).length;
+    return `
+      <div class="card p-4 flex flex-col justify-between border ${e.clockedIn ? 'border-yellow-400/50' : 'border-slate-800'}">
+        <div>
+          <div class="flex justify-between items-start gap-1">
+            <h4 class="font-extrabold text-sm text-white">${esc(e.name)}</h4>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${e.clockedIn ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}">${e.clockedIn ? 'ON SHIFT' : 'OFF'}</span>
+          </div>
+          <div class="flex items-center justify-between mt-0.5">
+            <p class="text-xs text-slate-400">${esc(e.role)}</p>
+            ${isAdmin && e.pin ? `<span class="text-[10px] font-mono bg-slate-900 px-1.5 py-0.5 rounded text-yellow-400 border border-slate-800">PIN: ${esc(e.pin)}</span>` : ''}
+          </div>
+          <p class="text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-800">Shifts this month: <strong class="text-white">${shifts}</strong> • ${e.clockedIn ? 'In: ' + esc(e.lastClockIn) : 'Signed Out'}</p>
+        </div>
+        <button onclick="toggleClock(${e.id})" class="mt-3 w-full py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition ${e.clockedIn ? 'bg-slate-800 hover:bg-red-600 text-yellow-400 hover:text-white border border-yellow-400/30' : 'bg-yellow-400 hover:bg-yellow-300 text-slate-950'}">
+          <i class="fa-solid ${e.clockedIn ? 'fa-right-from-bracket' : 'fa-right-to-bracket'} mr-1"></i> ${e.clockedIn ? 'Sign Out' : 'Sign In'}
+        </button>
+      </div>`;
+  }).join('') : '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-400">No active staff. Add a staff member from Month-End Payroll.</div>';
+
+  const filterEl = $('filter-staff-logs');
+  const curFilter = filterEl.value || 'ALL';
+  filterEl.innerHTML = `<option value="ALL">All Staff History (${state.staff.length})</option>` + state.staff.map((member) => `<option value="${member.id}">${esc(member.name)} — ${esc(member.role)}${member.archivedAt ? ' (Archived)' : ''}</option>`).join('');
+  filterEl.value = [...filterEl.options].some((o) => o.value === curFilter) ? curFilter : 'ALL';
+  $('man-staff').innerHTML = activeStaff.map((member) => `<option value="${member.id}">${esc(member.name)}</option>`).join('');
+  $('existing-staff-account-select').innerHTML = activeStaff.map((member) => `<option value="${member.id}">${esc(member.name)} — ${esc(member.role)}</option>`).join('');
+  renderAttendanceLogs();
+
+  // Payroll
+  $('payroll-tbody').innerHTML = activeStaff.map((staff) => {
+    const p = payrollOf(staff);
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <td class="py-3 px-3"><div class="font-bold text-white">${esc(staff.name)}</div><div class="text-xs text-slate-400">${esc(staff.role)}</div></td>
+        <td class="py-3 px-3 font-semibold">${p.logs.length}</td>
+        <td class="py-3 px-3"><input type="number" min="0" step="1" value="${Number(staff.baseSalary) || 0}" aria-label="Base salary for ${esc(staff.name)}" onchange="updatePayrollField(${staff.id}, 'baseSalary', this.value)" class="w-28 px-2 py-1 rounded text-xs font-bold"></td>
+        <td class="py-3 px-3 font-bold text-yellow-400">${p.totalOt.toFixed(1)} hrs</td>
+        <td class="py-3 px-3 font-semibold text-emerald-400">+ Rs. ${p.otPay.toLocaleString()}</td>
+        <td class="py-3 px-3"><input type="number" value="${staff.allowance}" onchange="updatePayrollField(${staff.id}, 'allowance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold"></td>
+        <td class="py-3 px-3"><input type="number" value="${staff.advance}" onchange="updatePayrollField(${staff.id}, 'advance', this.value)" class="w-24 px-2 py-1 rounded text-xs font-bold text-red-400"></td>
+        <td class="py-3 px-3 text-right font-black text-base text-yellow-400">Rs. ${p.netPay.toLocaleString()}</td>
+        <td class="py-3 px-3 text-center"><button onclick="openPayslipModal(${staff.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-print mr-1"></i> Payslip</button></td>
+        <td class="py-3 px-3 text-center whitespace-nowrap">
+          ${isAdmin ? `<button onclick="openEditStaffModal(${staff.id})" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>
+          <button onclick="archiveStaff(${staff.id})" class="bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-box-archive mr-1"></i>Archive</button>` : '—'}
+        </td>
+      </tr>`;
+  }).join('');
+
+  $('archived-staff-reports').classList.toggle('hidden', archivedStaff.length === 0);
+  $('archived-staff-tbody').innerHTML = archivedStaff.map((staff) => {
+    const logs = state.attendanceLogs.filter((log) => log.staffId === staff.id);
+    const hours = logs.reduce((total, log) => total + Number(log.hours || 0), 0);
+    const overtime = logs.reduce((total, log) => total + Number(log.ot || 0), 0);
+    const payroll = payrollOf(staff);
+    return `<tr>
+      <td class="py-3 px-3"><div class="font-bold text-white">${esc(staff.name)}</div><div class="text-xs text-slate-400">${esc(staff.role)}</div></td>
+      <td class="py-3 px-3 text-slate-300">${esc(String(staff.archivedAt).slice(0, 10))}</td>
+      <td class="py-3 px-3">${logs.length}</td>
+      <td class="py-3 px-3">${hours.toFixed(1)} hrs</td>
+      <td class="py-3 px-3 text-yellow-400">${overtime.toFixed(1)} hrs</td>
+      <td class="py-3 px-3">This month: Rs. ${payroll.netPay.toLocaleString()}</td>
+      <td class="py-3 px-3 text-center whitespace-nowrap">
+        <button onclick="openEditStaffModal(${staff.id})" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>
+        <button onclick="restoreStaff(${staff.id})" class="bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 border border-emerald-500/30 px-2.5 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-rotate-left mr-1"></i>Restore</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Deliveries & subscriptions
+  const riders = activeStaff.map((member) => member.name);
+  const statuses = ['Scheduled', 'Scheduled for Today', 'Scheduled for Tomorrow', 'Cutting & Packing', 'Out for Delivery', 'Delivered'];
+  $('deliveries-tbody').innerHTML = state.deliveries.map((d) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-3 px-3"><div class="font-bold text-yellow-400">${esc(d.date)}</div><div class="text-xs text-slate-400">${esc(d.slot)}</div></td>
+      <td class="py-3 px-3"><div class="font-bold text-white">${esc(d.customer)}</div><div class="text-xs text-slate-400">${esc(d.phone)}</div></td>
+      <td class="py-3 px-3 text-slate-300">${esc(d.area)}</td>
+      <td class="py-3 px-3 font-semibold text-white">${esc(d.items)}</td>
+      <td class="py-3 px-3"><select onchange="updateDeliveryRider(${d.id}, this.value)" class="px-2 py-1 rounded text-xs font-semibold">${riders.map((r) => `<option value="${esc(r)}" ${d.rider === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></td>
+      <td class="py-3 px-3"><select onchange="updateDeliveryStatus(${d.id}, this.value)" class="px-2 py-1 rounded text-xs font-bold">${statuses.map((s) => `<option value="${s}" ${d.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+      <td class="py-3 px-3 text-right"><button onclick="sendWhatsAppUpdate(${d.id})" class="bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp mr-1"></i> WhatsApp</button></td>
+    </tr>`).join('');
+
+  $('subs-tbody').innerHTML = state.subscriptions.map((s) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-3 px-3"><div class="font-bold text-white">${esc(s.customer)}</div><div class="text-xs text-slate-400">${esc(s.phone)}</div></td>
+      <td class="py-3 px-3 text-slate-300">${esc(s.area)}</td>
+      <td class="py-3 px-3 font-semibold text-yellow-400">${esc(s.pack)}</td>
+      <td class="py-3 px-3">${esc(s.day)}</td>
+      <td class="py-3 px-3 font-bold text-white">Rs. ${Number(s.price).toLocaleString()}</td>
+      <td class="py-3 px-3 text-right"><button onclick="pushSubToSelectedDate(${s.id})" class="bg-yellow-400 hover:bg-yellow-300 text-slate-950 px-3 py-1.5 rounded-lg text-xs font-extrabold transition"><i class="fa-solid fa-paper-plane mr-1"></i> Push to Selected Date</button></td>
+    </tr>`).join('');
+  enforceAccountantReadOnly();
+}
+
+function renderAttendanceLogs() {
+  if (!state) return;
+  const filterVal = $('filter-staff-logs').value;
+  const banner = $('filtered-staff-banner');
+  const logs = filterVal === 'ALL' ? state.attendanceLogs : state.attendanceLogs.filter((log) => String(log.staffId) === String(filterVal));
+  if (filterVal !== 'ALL') {
+    const staff = state.staff.find((member) => String(member.id) === String(filterVal));
+    if (staff) {
+      banner.classList.remove('hidden');
+      banner.innerHTML = `
+        <div><span class="text-xs uppercase text-yellow-400 font-bold">Individual Staff Attendance Summary</span>
+        <h4 class="text-base font-black text-white">${esc(staff.name)} <span class="text-xs font-normal text-slate-400">(${esc(staff.role)}${staff.archivedAt ? ', Archived' : ''})</span></h4></div>
+        <div class="flex gap-6 text-xs">
+          <div><span class="text-slate-400 block">Shifts Logged</span><strong class="text-sm text-white">${logs.length} Shifts</strong></div>
+          <div><span class="text-slate-400 block">Total Hours</span><strong class="text-sm text-emerald-400">${logs.reduce((s, l) => s + Number(l.hours || 0), 0).toFixed(1)} hrs</strong></div>
+          <div><span class="text-slate-400 block">Overtime Accrued</span><strong class="text-sm text-yellow-400">+${logs.reduce((s, l) => s + Number(l.ot || 0), 0).toFixed(1)} hrs</strong></div>
+        </div>`;
+    }
+  } else banner.classList.add('hidden');
+
+  $('attendance-log-tbody').innerHTML = logs.map((l) => {
+    const staff = state.staff.find((member) => member.id === l.staffId) || { name: 'Staff', role: '-' };
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <td class="py-3 px-4 text-slate-300 font-medium">${esc(l.date)}</td>
+        <td class="py-3 px-4 font-bold text-white">${esc(staff.name)}${staff.archivedAt ? ' <span class="text-[10px] text-amber-300">(Archived)</span>' : ''}</td>
+        <td class="py-3 px-4 text-xs text-slate-400">${esc(staff.role)}</td>
+        <td class="py-3 px-4 text-emerald-400 font-semibold">${esc(l.signIn)}</td>
+        <td class="py-3 px-4 ${l.signOut === 'Active Shift' ? 'text-yellow-400 font-bold' : 'text-slate-300'}">${esc(l.signOut)}</td>
+        <td class="py-3 px-4 font-medium">${Number(l.hours).toFixed(1)} hrs</td>
+        <td class="py-3 px-4 text-yellow-400 font-bold">+${Number(l.ot).toFixed(1)} hrs</td>
+        <td class="py-3 px-4">${l.signOut === 'Active Shift' ? `<button onclick="manualSignOut(${l.staffId}, this)" class="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap"><i class="fa-solid fa-right-from-bracket mr-1"></i> Manual Sign Out</button>` : '—'}</td>
+      </tr>`;
+  }).join('');
+}
+
+// ---------- clock & startup ----------
+function updateClock() {
+  const t = new Date().toLocaleTimeString();
+  if ($('live-clock')) $('live-clock').innerText = t;
+  if ($('live-clock-mobile')) $('live-clock-mobile').innerText = t;
+}
+setInterval(updateClock, 1000);
+
+async function bootstrap() {
+  updateClock();
+  setDeliveryDateInputDefaults();
+  inventoryUnitFormChanged();
+  Api.onUnauthorized(() => {
+    currentUser = null; state = null; Api.clearToken();
+    showToast('Session expired. Please sign in again.', 'error');
+    openLoginModal();
+  });
+  $('archive-calendar-picker').value = selectedArchiveDate;
+  calculateSlaughterPreview();
+
+  const scannedWall = window.location.search.includes('qr=wall-checkin');
+  currentUser = null;
+  state = null;
+  Api.clearToken();
+  if (scannedWall) openMobileQrPortal(); else openLoginModal();
+}
+
+window.bootstrap = bootstrap;
+window.onload = bootstrap;

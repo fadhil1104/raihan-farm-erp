@@ -392,7 +392,11 @@ router.get('/', async (req, res) => {
   res.json(await buildState(req.user.role));
 });
 
+<<<<<<< HEAD
 router.get('/pos-sales', async (req, res) => {
+=======
+router.get('/pos-sales', requireAuth, async (req, res) => {
+>>>>>>> parent of 6165be7 (new user farm created)
   const sales = await PosSale.find()
     .sort({ createdAt: -1, _id: -1 })
     .select('-_id -__v -uid -seq -createdAt -updatedAt')
@@ -402,7 +406,11 @@ router.get('/pos-sales', async (req, res) => {
 
 // PUT /api/state -> sync app state; staff inventory stock is changed only by stock additions and POS sales.
 // ?replace=true (admin) makes the database exactly match the payload - used by "Restore Backup"
+<<<<<<< HEAD
 router.put('/', requireWriter, async (req, res) => {
+=======
+router.put('/', requireAuth, requireWriter, async (req, res) => {
+>>>>>>> parent of 6165be7 (new user farm created)
   const body = req.body || {};
   const isAdmin = req.user.role === 'admin';
   const replace = isAdmin && req.query.replace === 'true';
@@ -1036,7 +1044,11 @@ router.delete('/pos-sales/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true, deletedSale: clean(sale.toObject()), restoredInventoryItems: itemIds.length });
 });
 
+<<<<<<< HEAD
 router.get('/inventory/stock-additions', async (req, res) => {
+=======
+router.get('/inventory/stock-additions', requireAuth, async (req, res) => {
+>>>>>>> parent of 6165be7 (new user farm created)
   const date = String(req.query.date || '');
   const parsedDate = new Date(`${date}T00:00:00.000Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {

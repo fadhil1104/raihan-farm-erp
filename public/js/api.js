@@ -1,0 +1,59 @@
+/* Thin API client for the Raihan Farm ERP backend */
+const Api = (() => {
+  const TOKEN_KEY = 'raihan_erp_token';
+  const BASE_KEY = 'raihan_erp_api_base';
+  let onUnauthorized = () => {};
+
+  const base = () => (localStorage.getItem(BASE_KEY) ?? window.RAIHAN_CONFIG.API_BASE ?? '').replace(/\/$/, '');
+  const token = () => localStorage.getItem(TOKEN_KEY);
+
+  async function request(path, { method = 'GET', body, auth = true, tokenOverride } = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    const authToken = tokenOverride || token();
+    if (auth && authToken) headers.Authorization = 'Bearer ' + authToken;
+    let res;
+    try {
+      res = await fetch(base() + '/api' + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    } catch (e) {
+      throw Object.assign(new Error('Cannot reach the server at ' + (base() || location.origin)), { offline: true });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && auth && path !== '/auth/login') onUnauthorized();
+    if (!res.ok) throw Object.assign(new Error(data.error || 'Request failed (' + res.status + ')'), { status: res.status });
+    return data;
+  }
+
+  return {
+    request,
+    base,
+    setBase: (v) => localStorage.setItem(BASE_KEY, (v || '').trim()),
+    hasToken: () => !!token(),
+    setToken: (t) => localStorage.setItem(TOKEN_KEY, t),
+    clearToken: () => localStorage.removeItem(TOKEN_KEY),
+    onUnauthorized: (fn) => { onUnauthorized = fn; },
+    login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password }, auth: false }),
+    createStaff: (staff, phone, password) => request('/auth/staff', { method: 'POST', body: { staff, phone, password } }),
+    createStaffAccount: (staffId, phone, password) => request('/auth/staff', { method: 'POST', body: { staffId, phone, password } }),
+    updateStaff: (staffId, staff) => request('/auth/staff/' + encodeURIComponent(staffId), { method: 'PUT', body: staff }),
+    archiveStaff: (staffId) => request('/auth/staff/' + encodeURIComponent(staffId), { method: 'DELETE' }),
+    restoreStaff: (staffId) => request('/auth/staff/' + encodeURIComponent(staffId) + '/restore', { method: 'PATCH' }),
+    updateStaffProfile: (profile, tokenOverride) => request('/auth/me', { method: 'PUT', body: profile, tokenOverride }),
+    me: () => request('/auth/me'),
+    getState: () => request('/state'),
+    getPosSales: () => request('/state/pos-sales'),
+    putState: (state, replace = false) => request('/state' + (replace ? '?replace=true' : ''), { method: 'PUT', body: state }),
+    addCashierEntry: (entry) => request('/state/cashier-entries', { method: 'POST', body: { ...entry, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } }),
+    updateCashierExtraCashEntry: (entryId, entry) => request('/state/cashier-entries/' + encodeURIComponent(entryId), { method: 'PUT', body: entry }),
+    updatePosSalePaymentMethod: (saleId, payment) => request('/state/pos-sales/' + encodeURIComponent(saleId) + '/payment', { method: 'PATCH', body: { payment } }),
+    updatePosSale: (saleId, sale) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'PUT', body: sale }),
+    deletePosSale: (saleId) => request('/state/pos-sales/' + encodeURIComponent(saleId), { method: 'DELETE' }),
+    updateInventoryItem: (itemId, item) => request('/state/inventory/' + encodeURIComponent(itemId), { method: 'PUT', body: item }),
+    addInventoryStock: (itemId, quantity) => request('/state/inventory/' + encodeURIComponent(itemId) + '/stock', { method: 'POST', body: { quantity } }),
+    recordInventoryAdjustment: (adjustment) => request('/state/inventory/adjustments', { method: 'POST', body: adjustment }),
+    getInventoryStockAdditions: (date) => request('/state/inventory/stock-additions?date=' + encodeURIComponent(date)),
+    roster: () => request('/attendance/roster', { auth: false }),
+    qrClock: (staffId, pin) => request('/attendance/qr-clock', { method: 'POST', body: { staffId, pin }, auth: false }),
+    kioskClock: (staffId) => request('/attendance/clock', { method: 'POST', body: { staffId } }),
+    manualSignOut: (staffId) => request('/attendance/manual-sign-out', { method: 'POST', body: { staffId } })
+  };
+})();
