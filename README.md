@@ -76,35 +76,33 @@ The frontend is available at `http://localhost:8080`, the API at
 `http://localhost:5000`, and MongoDB at `localhost:27017`. The frontend web server
 proxies `/api` requests to the separate backend service.
 
-## Deploy the frontend on Vercel
+## Deploy frontend and API on the same Vercel URL
 
-The Vercel project serves the frontend. The Express API and MongoDB must be
-deployed separately: the API is a long-running server, and MongoDB must be
-reachable from the API host (for example, use MongoDB Atlas).
+The existing Vercel project can serve both the frontend and backend API, so users
+continue using `https://raihan-farm-erp.vercel.app` and
+`https://raihan-farm-erp.vercel.app/farm`. The API runs as a Vercel Function at
+same-origin `/api/*` paths; no separate public API URL is needed.
 
-1. Import this repository into Vercel and set **Root Directory** to `frontend`.
-   Leave **Include source files outside of the Root Directory** disabled.
-   Vercel uses `frontend/vercel.json` and the frontend lockfile to install
-   dependencies, build the Vite app, publish `dist`, and route app paths to
-   `index.html`.
-2. Deploy the backend on a Node.js host with the working directory set to
-   `backend` and start command `npm start`. Configure these backend environment
-   variables in that host:
+1. In the existing Vercel project settings, change **Root Directory** to the
+   repository root (`.`). This is still the same Vercel project and domain.
+   The root `server.js` exposes the existing Express API as a Vercel Function.
+   The build copies the Vite frontend into Vercel's static `public/` assets, and
+   the root `vercel.json` routes `/farm` to the app entry page.
+2. In that project's Production Environment Variables, configure:
    * `MONGODB_URI`: the production MongoDB connection string
-   * `JWT_SECRET`: a unique, long random secret
-   * `ADMIN_USERNAME` and `ADMIN_PASSWORD`: the initial admin account
-   * `ACCOUNTANT_USERNAME` and `ACCOUNTANT_PASSWORD`: the optional read-only accountant account (`accountant` is the default username)
-   * `FARM_USERNAME` and `FARM_PASSWORD`: credentials for the farm-only login (`farm` is the default username)
-   * `CORS_ORIGIN`: the exact deployed Vercel origin, such as
-     `https://your-project.vercel.app` (add any custom domain origins as needed)
+   * `JWT_SECRET`: a unique, long random secret (do not use the example value)
+   * `ADMIN_USERNAME` and `ADMIN_PASSWORD`: the existing admin account credentials, or initial credentials if the database has no admin
+   * `FARM_USERNAME`: `farm`
+   * `FARM_PASSWORD`: `farm1234`
+   * `SEED_ON_START`: `true`, to create the farm account and initial animal types in this database if absent
    * `TIMEZONE`: `Asia/Colombo` if the default timezone is appropriate
-3. In Vercel, set `VITE_API_BASE` for Preview and Production to the public
-   backend origin, without a trailing slash or `/api` (for example,
-   `https://your-api.example.com`). This is a build-time frontend variable, so
-   redeploy after changing it.
-4. After both services are deployed, check
-   `https://your-api.example.com/api/health`, then open the Vercel URL and sign
-   in with the configured admin account.
+   Keep the same MongoDB database used by the shop so the existing admin and farm
+   accounts share the established authentication database. The farm and shop
+   business records remain isolated by role and collections.
+3. Ensure `VITE_API_BASE` is unset/empty in Vercel so the browser requests `/api`
+   on this same domain. Deploy the updated project to Production.
+4. Verify `https://raihan-farm-erp.vercel.app/api/health` returns `{"ok":true,...}`,
+   then sign in at `https://raihan-farm-erp.vercel.app/farm`.
 
 Do not commit `.env` files or use example development secrets in production.
 For local development, leave `VITE_API_BASE` unset; Vite proxies `/api` to

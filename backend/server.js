@@ -16,6 +16,8 @@ const origins = (process.env.CORS_ORIGIN || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+let startupPromise;
+
 // Middleware
 app.use(
   helmet({
@@ -37,6 +39,15 @@ app.use(morgan('dev'));
 app.use(async (req, res, next) => {
   try {
     await connectDB();
+    if (process.env.SEED_ON_START === 'true') {
+      if (!startupPromise) {
+        startupPromise = seedDatabase().catch((error) => {
+          startupPromise = undefined;
+          throw error;
+        });
+      }
+      await startupPromise;
+    }
     next();
   } catch (error) {
     console.error('Database connection failed:', error);
