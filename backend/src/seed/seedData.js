@@ -52,7 +52,6 @@ async function ensureAccountant() {
   console.log(`Created accountant user: ${username}`);
 }
 
-<<<<<<< HEAD
 async function ensureFarmUser() {
   const username = String(process.env.FARM_USERNAME || 'farm').trim().toLowerCase();
   const password = process.env.FARM_PASSWORD;
@@ -98,11 +97,6 @@ async function seedDatabase() {
   await ensureAccountant();
   await ensureFarmUser();
   await ensureFarmAnimalTypes();
-=======
-async function seedDatabase() {
-  await ensureUsers();
-  await ensureAccountant();
->>>>>>> parent of 6165be7 (new user farm created)
   console.log('User setup complete. No demo business data was added.');
 }
 

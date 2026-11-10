@@ -31,13 +31,9 @@ const requireWriter = (req, res, next) =>
     ? next()
     : res.status(403).json({ error: 'Accountant accounts have read-only access' });
 
-<<<<<<< HEAD
 const requireFarm = (req, res, next) =>
   req.user && req.user.role === 'farm'
     ? next()
     : res.status(403).json({ error: 'Farm account access required' });
 
 module.exports = { signToken, requireAuth, requireAdmin, requireWriter, requireFarm };
-=======
-module.exports = { signToken, requireAuth, requireAdmin, requireWriter };
->>>>>>> parent of 6165be7 (new user farm created)
