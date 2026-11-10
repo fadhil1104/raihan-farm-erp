@@ -1586,7 +1586,10 @@ async function submitInventoryEdit(id) {
   }
 
   const newPrice = Number($(`inv-price-${id}`).value);
-  const newStock = Number($(`inv-stock-${id}`).value);
+  const enteredStock = Number($(`inv-stock-${id}`).value);
+  const newStock = inventoryUnit(item) === 'kg' && Number.isFinite(enteredStock)
+    ? Number(enteredStock.toFixed(2))
+    : enteredStock;
   const wholesaleInput = $(`inv-wholesale-${id}`);
   const newWholesale = wholesaleInput ? Number(wholesaleInput.value || 0) : Number(item.wholesalePrice || 0);
   const nameInput = $(`inv-name-${id}`), sourceInput = $(`inv-source-${id}`);
@@ -3610,10 +3613,11 @@ function renderInventoryCards() {
       ? '<div class="md:col-span-2 rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">No inventory items start with that search text.</div>'
       : items.map((item) => {
     const unit = inventoryUnit(item), priceLabel = inventoryPriceLabel(item);
-    const stockStep = unit === 'kg' ? '0.1' : '1';
+    const stockStep = unit === 'kg' ? '0.01' : '1';
+    const stockValue = unit === 'kg' ? Number(inventoryStock(item).toFixed(2)) : inventoryStock(item);
         const priceAndStockControls = isAdmin
           ? `<div><label class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</label><input type="number" min="0" step="0.01" id="inv-price-${esc(item.id)}" value="${inventoryPrice(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${inventoryStock(item)}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
+              <div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Stock Weight Audit (kg)' : `Stock Quantity Audit (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="0" step="${stockStep}" id="inv-stock-${esc(item.id)}" value="${stockValue}" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>`
           : `<div><span class="block text-xs text-slate-400 mb-1">Retail Price ${esc(priceLabel)} (Rs.)</span><strong class="block px-3 py-2 rounded-lg bg-slate-950 text-sm font-bold text-yellow-400">Rs. ${inventoryPrice(item).toLocaleString()}</strong></div>
               ${isStaff ? `<div><label class="block text-xs text-slate-400 mb-1">${unit === 'kg' ? 'Add Stock Weight (kg)' : `Add Stock Quantity (${esc(inventoryUnitLabel(item))}s)`}</label><input type="number" min="${unit === 'kg' ? '0.01' : '1'}" step="${stockStep}" id="inv-add-stock-${esc(item.id)}" placeholder="Enter amount to add" class="w-full px-3 py-2 rounded-lg text-sm font-bold"></div>` : ''}`;
         return `

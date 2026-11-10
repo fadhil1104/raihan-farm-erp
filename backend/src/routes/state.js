@@ -1069,7 +1069,10 @@ router.put('/inventory/:id', requireAuth, requireAdmin, async (req, res) => {
   const stockField = unitType === 'kg' ? 'stockKg' : 'stockQuantity';
   const priceField = unitType === 'kg' ? 'pricePerKg' : 'pricePerUnit';
   const expectedStock = req.body?.expectedStock;
-  const stock = req.body?.[stockField];
+  const requestedStock = req.body?.[stockField];
+  const stock = unitType === 'kg' && typeof requestedStock === 'number' && Number.isFinite(requestedStock)
+    ? Number(requestedStock.toFixed(2))
+    : requestedStock;
   const price = req.body?.[priceField];
   const name = String(req.body?.name || '').trim();
   const source = String(req.body?.source || '').trim();
